@@ -1,0 +1,49 @@
+// Wraps kokoro-js for client-side TTS.
+// The model (~80 MB quantized) is downloaded once and cached by the browser in IndexedDB.
+import { KokoroTTS } from "https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/dist/kokoro.web.js";
+
+let tts = null;
+let audioEl = null;
+
+export async function initTTS(onProgress) {
+  tts = await KokoroTTS.from_pretrained("onnx-community/Kokoro-82M-v1.0-ONNX", {
+    dtype: "q8",
+    device: "webgpu",       // falls back to wasm automatically on unsupported devices
+    progress_callback: onProgress
+  });
+  return tts;
+}
+
+export async function synthesize(text, voice) {
+  if (!tts) throw new Error("TTS not initialized");
+  const audio = await tts.generate(text, { voice });
+  return audio.toBlob();   // returns a Blob of type audio/wav
+}
+
+// Play a blob through a shared <audio> element with playsInline for iOS.
+export function playBlob(blob) {
+  return new Promise((resolve, reject) => {
+    if (audioEl) {
+      audioEl.pause();
+      URL.revokeObjectURL(audioEl.src);
+    }
+    audioEl = document.createElement("audio");
+    audioEl.setAttribute("playsinline", "");
+    audioEl.src = URL.createObjectURL(blob);
+    audioEl.onended = () => { resolve(); };
+    audioEl.onerror = (e) => reject(new Error("Audio playback error"));
+    audioEl.play().catch(reject);
+  });
+}
+
+export function cancelPlayback() {
+  if (audioEl) {
+    audioEl.pause();
+    URL.revokeObjectURL(audioEl.src);
+    audioEl = null;
+  }
+}
+
+export function isReady() {
+  return tts !== null;
+}
