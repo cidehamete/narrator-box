@@ -10,7 +10,7 @@ export async function initTTS(onProgress) {
   dbg("TTS: loading model…");
   tts = await KokoroTTS.from_pretrained("onnx-community/Kokoro-82M-v1.0-ONNX", {
     dtype: "q8",
-    device: "webgpu",
+    device: "wasm",   // webgpu OOMs on iPhone; wasm is reliable on iOS Safari
     progress_callback: (p) => {
       if (p.status === "progress") {
         dbg(`TTS: download ${Math.round((p.progress ?? 0) * 100)}% — ${p.file ?? ""}`);
