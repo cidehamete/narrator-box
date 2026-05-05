@@ -21,10 +21,11 @@ export async function initTTS(onProgress) {
       }
     }
   });
-  dbg("TTS: model loaded — warming up inference graph…");
-  // Pay the JIT/graph-compile cost now, not during the first live tap.
-  await tts.generate("Ready.", { voice: "af_bella" });
-  dbg("TTS: warm-up done — ready");
+  dbg("TTS: model loaded — ready (warm-up runs in background)");
+  // Fire-and-forget warm-up: pays JIT cost without blocking the UI.
+  tts.generate("Ready.", { voice: "af_bella" })
+    .then(() => dbg("TTS: warm-up done"))
+    .catch((err) => dbg(`TTS: warm-up failed — ${err.message}`));
   return tts;
 }
 
