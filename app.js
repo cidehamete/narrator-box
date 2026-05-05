@@ -2,6 +2,7 @@ import { hydrateSettings, saveSettings, defaultSettings, VOICE_OPTIONS } from ".
 import { respond } from "./llm.js";
 import { createSTT } from "./stt.js";
 import { initTTS, synthesize, playBlob, cancelPlayback } from "./tts.js";
+import { dbg, initDebugPanel } from "./debug.js";
 
 // ─── State ───────────────────────────────────────────────────────────────────
 
@@ -18,12 +19,15 @@ async function boot() {
   renderPedals();
   renderSettings();
   setPedalsEnabled(false);
+  dbg("boot: starting TTS init");
 
   try {
     await initTTS(onTTSProgress);
     hideLoader();
     setPedalsEnabled(true);
+    dbg("boot: ready");
   } catch (err) {
+    dbg(`boot: TTS init failed — ${err.message}`);
     showLoaderError(`Failed to load voice engine: ${err.message}`);
   }
 }
@@ -160,10 +164,10 @@ function startListening(index) {
 }
 
 async function runNarrator(index, userText) {
-  // Guard: pedal may have been cancelled while STT was running
   if (activeIndex !== index) return;
 
   setPedalState(index, "thinking");
+  dbg(`pedal ${index}: thinking — "${userText.slice(0, 60)}"`);
 
   const narrator = settings.narrators[index];
   let responseText;
@@ -177,8 +181,9 @@ async function runNarrator(index, userText) {
       maxTokens: settings.maxTokens,
       temperature: settings.temperature
     });
+    dbg(`pedal ${index}: LLM response — "${responseText.slice(0, 80)}"`);
   } catch (err) {
-    console.error("LLM error:", err);
+    dbg(`pedal ${index}: LLM error — ${err.message}`);
     flashError(index, err.message);
     setPedalState(index, "idle");
     setOtherPedalsDisabled(index, false);
@@ -186,25 +191,26 @@ async function runNarrator(index, userText) {
     return;
   }
 
-  // Guard again after async
-  if (activeIndex !== index) return;
+  if (activeIndex !== index) { dbg(`pedal ${index}: cancelled after LLM`); return; }
 
   setPedalState(index, "speaking");
+  dbg(`pedal ${index}: speaking`);
 
   try {
     const blob = await synthesize(responseText, narrator.voice);
-    if (activeIndex !== index) return; // cancelled during synthesis
+    if (activeIndex !== index) { dbg(`pedal ${index}: cancelled after synthesize`); return; }
     await playBlob(blob);
+    dbg(`pedal ${index}: playback complete`);
   } catch (err) {
-    console.error("TTS/playback error:", err);
+    dbg(`pedal ${index}: TTS/playback error — ${err.message}`);
     flashError(index, err.message);
   }
 
-  // Only reset if this pedal is still the active one
   if (activeIndex === index) {
     setPedalState(index, "idle");
     setOtherPedalsDisabled(index, false);
     activeIndex = null;
+    dbg(`pedal ${index}: back to idle`);
   }
 }
 
@@ -376,6 +382,7 @@ function escHtml(str) {
 // ─── Entry point ──────────────────────────────────────────────────────────────
 
 document.addEventListener("DOMContentLoaded", () => {
+  initDebugPanel();
   wireSettings();
   boot();
 });

@@ -447,5 +447,49 @@ input[type="range"] {
 }
 .btn-danger:active { opacity: 0.8; }
 
+/* ── Debug panel ──────────────────────────────────────────────────────────── */
+#debug-panel {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  z-index: 300;
+  background: #0a0a0a;
+  border-top: 2px solid var(--accent);
+  max-height: 40dvh;
+  display: flex;
+  flex-direction: column;
+}
+#debug-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 12px;
+  background: #111;
+  font-size: 0.75rem;
+  color: var(--accent);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  flex-shrink: 0;
+}
+#debug-clear {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+#debug-log {
+  overflow-y: auto;
+  padding: 8px 12px;
+  font-size: 0.72rem;
+  font-family: "Menlo", "Courier New", monospace;
+  color: #ccc;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  flex: 1;
+}
+
 /* ── Utility ──────────────────────────────────────────────────────────────── */
 .hidden { display: none !important; }
