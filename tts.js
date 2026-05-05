@@ -21,18 +21,30 @@ export async function synthesize(text, voice) {
 }
 
 // Play a blob through a shared <audio> element with playsInline for iOS.
+// The element must be appended to the DOM — iOS Safari won't fire onended otherwise.
 export function playBlob(blob) {
   return new Promise((resolve, reject) => {
     if (audioEl) {
       audioEl.pause();
       URL.revokeObjectURL(audioEl.src);
+      audioEl.remove();
     }
     audioEl = document.createElement("audio");
     audioEl.setAttribute("playsinline", "");
+    audioEl.style.display = "none";
     audioEl.src = URL.createObjectURL(blob);
-    audioEl.onended = () => { resolve(); };
-    audioEl.onerror = (e) => reject(new Error("Audio playback error"));
-    audioEl.play().catch(reject);
+
+    const cleanup = () => {
+      URL.revokeObjectURL(audioEl.src);
+      audioEl.remove();
+      audioEl = null;
+    };
+
+    audioEl.onended = () => { cleanup(); resolve(); };
+    audioEl.onerror = () => { cleanup(); reject(new Error("Audio playback error")); };
+
+    document.body.appendChild(audioEl);
+    audioEl.play().catch((err) => { cleanup(); reject(err); });
   });
 }
 
@@ -40,6 +52,7 @@ export function cancelPlayback() {
   if (audioEl) {
     audioEl.pause();
     URL.revokeObjectURL(audioEl.src);
+    audioEl.remove();
     audioEl = null;
   }
 }
