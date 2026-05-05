@@ -6,6 +6,9 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Narrator Box</title>
+  <!-- Must be first: installs service worker that fakes COOP/COEP headers,
+       enabling SharedArrayBuffer → multi-threaded WASM for Kokoro inference. -->
+  <script src="coi-serviceworker.js"></script>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>

@@ -59,7 +59,7 @@ export function defaultSettings() {
   return {
     apiKey: "",
     model: "claude-haiku-4-5-20251001",
-    maxTokens: 80,
+    maxTokens: 60,
     temperature: 0.9,
     narrators: DEFAULT_NARRATORS.map(n => ({ ...n }))
   };

@@ -1,7 +1,7 @@
 import { hydrateSettings, saveSettings, defaultSettings, VOICE_OPTIONS } from "./narrators.js";
-import { respond } from "./llm.js";
+import { respondStream } from "./llm.js";
 import { createSTT } from "./stt.js";
-import { initTTS, synthesize, playBlob, cancelPlayback } from "./tts.js";
+import { initTTS, synthesize, playBlob, cancelPlayback, AudioQueue } from "./tts.js";
 import { dbg, initDebugPanel } from "./debug.js";
 
 // ─── State ───────────────────────────────────────────────────────────────────
@@ -10,8 +10,9 @@ let settings = hydrateSettings();
 
 // Per-pedal state: "idle" | "listening" | "thinking" | "speaking"
 const pedalState = [null, null, null, null];
-let activeIndex = null;   // index of the currently active pedal (0-based)
-let activeStt = null;     // current STT handle
+let activeIndex = null;
+let activeStt   = null;
+let activeQueue = null; // AudioQueue for the current pedal
 
 // ─── Boot ────────────────────────────────────────────────────────────────────
 
@@ -19,8 +20,13 @@ async function boot() {
   renderPedals();
   renderSettings();
   setPedalsEnabled(false);
-  dbg("boot: starting TTS init");
 
+  dbg(`crossOriginIsolated: ${window.crossOriginIsolated}`);
+  if (!window.crossOriginIsolated) {
+    dbg("WARNING: SharedArrayBuffer unavailable — TTS will be single-threaded");
+  }
+
+  dbg("boot: starting TTS init");
   try {
     await initTTS(onTTSProgress);
     hideLoader();
@@ -33,11 +39,12 @@ async function boot() {
 }
 
 function onTTSProgress(progress) {
-  // progress = { status, name, file, progress (0-1), loaded, total }
+  const loaderText = document.getElementById("loader-text");
+  if (!loaderText) return;
   if (progress.status === "progress") {
-    const pct = Math.round((progress.progress ?? 0) * 100);
-    const loaderText = document.getElementById("loader-text");
-    if (loaderText) loaderText.textContent = `Loading voice engine… ${pct}%`;
+    loaderText.textContent = `Loading voice engine… ${progress.pct}%`;
+  } else if (progress.status === "done") {
+    loaderText.textContent = "Warming up voices…";
   }
 }
 
@@ -73,15 +80,12 @@ function setPedalState(index, state) {
 }
 
 function setPedalsEnabled(enabled) {
-  document.querySelectorAll(".pedal").forEach(btn => {
-    btn.disabled = !enabled;
-  });
+  document.querySelectorAll(".pedal").forEach(btn => { btn.disabled = !enabled; });
 }
 
 function setOtherPedalsDisabled(activeIdx, disabled) {
   document.querySelectorAll(".pedal").forEach(btn => {
-    const i = parseInt(btn.dataset.index, 10);
-    if (i !== activeIdx) btn.disabled = disabled;
+    if (parseInt(btn.dataset.index, 10) !== activeIdx) btn.disabled = disabled;
   });
 }
 
@@ -90,43 +94,29 @@ function setOtherPedalsDisabled(activeIdx, disabled) {
 async function handlePedalTap(index) {
   const state = pedalState[index];
 
-  if (state === "speaking") {
-    // Cancel playback → idle
-    cancelPlayback();
+  if (state === "speaking" || state === "thinking") {
+    activeQueue?.abort();
+    activeQueue = null;
     setPedalState(index, "idle");
     setOtherPedalsDisabled(index, false);
     activeIndex = null;
-    return;
-  }
-
-  if (state === "thinking") {
-    // Can't easily cancel an in-flight fetch + TTS, so just mark cancelled
-    // and ignore the result when it arrives via the guard below
-    cancelPlayback();
-    setPedalState(index, "idle");
-    setOtherPedalsDisabled(index, false);
-    activeIndex = null;
+    dbg(`pedal ${index}: cancelled by tap`);
     return;
   }
 
   if (state === "listening") {
-    // User tapped to stop listening → move to thinking
     if (activeStt) activeStt.stop();
-    return; // STT onEnd will drive the transition to "thinking"
+    return; // STT onEnd drives the transition to thinking
   }
 
   if (state === "idle") {
-    // Check API key first
     if (!settings.apiKey) {
       flashError(index, "Set your Anthropic API key in ⚙️ settings first.");
       return;
     }
-
     activeIndex = index;
     setOtherPedalsDisabled(index, true);
     setPedalState(index, "listening");
-
-    // Try STT; fall back to text input if unavailable
     startListening(index);
   }
 }
@@ -139,12 +129,10 @@ function startListening(index) {
     },
     onError: (err) => {
       activeStt = null;
-      console.warn("STT error:", err.message);
-      // Surface the type-instead fallback
+      dbg(`STT error: ${err.message}`);
       showTypeInstead(index);
     },
     onEnd: () => {
-      // If no result fired yet (e.g. no-speech), show type-instead
       if (pedalState[index] === "listening") {
         activeStt = null;
         showTypeInstead(index);
@@ -156,11 +144,33 @@ function startListening(index) {
     try {
       activeStt.start();
     } catch (err) {
-      console.warn("STT start failed:", err.message);
+      dbg(`STT start failed: ${err.message}`);
       activeStt = null;
       showTypeInstead(index);
     }
   }
+}
+
+// ─── Narrator run — streaming LLM + sentence-by-sentence TTS ─────────────────
+
+// Flush the audio queue when a sentence boundary is detected in the accumulated buffer.
+function flushSentences(buf, queue, isFinal) {
+  while (true) {
+    // Require at least 8 chars before a sentence-ending punctuation + optional quote/paren
+    const m = buf.match(/^(.{8,}?[.!?]['")\]]?)(\s+|$)/s);
+    if (!m) break;
+    const sentence = m[1].trim();
+    dbg(`sentence: "${sentence.slice(0, 60)}"`);
+    queue.push(sentence);
+    buf = buf.slice(m[0].length);
+  }
+  // On final flush, push whatever remains
+  if (isFinal && buf.trim()) {
+    dbg(`sentence (final): "${buf.trim().slice(0, 60)}"`);
+    queue.push(buf.trim());
+    buf = "";
+  }
+  return buf;
 }
 
 async function runNarrator(index, userText) {
@@ -170,43 +180,48 @@ async function runNarrator(index, userText) {
   dbg(`pedal ${index}: thinking — "${userText.slice(0, 60)}"`);
 
   const narrator = settings.narrators[index];
-  let responseText;
+  const queue = new AudioQueue(narrator.voice);
+  activeQueue = queue;
+
+  let buf = "";
+  let firstChunk = true;
 
   try {
-    responseText = await respond({
+    for await (const chunk of respondStream({
       apiKey: settings.apiKey,
       model: settings.model,
       systemPrompt: narrator.systemPrompt,
       userText,
       maxTokens: settings.maxTokens,
       temperature: settings.temperature
-    });
-    dbg(`pedal ${index}: LLM response — "${responseText.slice(0, 80)}"`);
+    })) {
+      if (queue.aborted || activeIndex !== index) break;
+
+      buf += chunk;
+
+      if (firstChunk) {
+        firstChunk = false;
+        dbg(`pedal ${index}: first LLM token received — switching to speaking`);
+        setPedalState(index, "speaking");
+      }
+
+      buf = flushSentences(buf, queue, false);
+    }
+
+    // Flush any trailing text
+    if (!queue.aborted && activeIndex === index) {
+      flushSentences(buf, queue, true);
+    }
+
+    await queue.drain();
+
   } catch (err) {
-    dbg(`pedal ${index}: LLM error — ${err.message}`);
-    flashError(index, err.message);
-    setPedalState(index, "idle");
-    setOtherPedalsDisabled(index, false);
-    activeIndex = null;
-    return;
-  }
-
-  if (activeIndex !== index) { dbg(`pedal ${index}: cancelled after LLM`); return; }
-
-  setPedalState(index, "speaking");
-  dbg(`pedal ${index}: speaking`);
-
-  try {
-    const blob = await synthesize(responseText, narrator.voice);
-    if (activeIndex !== index) { dbg(`pedal ${index}: cancelled after synthesize`); return; }
-    await playBlob(blob);
-    dbg(`pedal ${index}: playback complete`);
-  } catch (err) {
-    dbg(`pedal ${index}: TTS/playback error — ${err.message}`);
+    dbg(`pedal ${index}: error — ${err.message}`);
     flashError(index, err.message);
   }
 
   if (activeIndex === index) {
+    activeQueue = null;
     setPedalState(index, "idle");
     setOtherPedalsDisabled(index, false);
     activeIndex = null;
@@ -218,11 +233,11 @@ async function runNarrator(index, userText) {
 
 function showTypeInstead(index) {
   if (pedalState[index] !== "listening") return;
-  setPedalState(index, "idle"); // visually idle while text input is open
+  setPedalState(index, "idle");
 
   const overlay = document.getElementById("type-instead-overlay");
-  const input = document.getElementById("type-instead-input");
-  const form = document.getElementById("type-instead-form");
+  const input   = document.getElementById("type-instead-input");
+  const form    = document.getElementById("type-instead-form");
 
   overlay.classList.remove("hidden");
   input.value = "";
@@ -265,8 +280,7 @@ function renderSettings() {
   settings.narrators.forEach((narrator, i) => {
     document.getElementById(`narrator-${i}-name`).value = narrator.name;
     document.getElementById(`narrator-${i}-prompt`).value = narrator.systemPrompt;
-    const voiceSelect = document.getElementById(`narrator-${i}-voice`);
-    voiceSelect.value = narrator.voice;
+    document.getElementById(`narrator-${i}-voice`).value = narrator.voice;
   });
 }
 
@@ -326,19 +340,18 @@ function wireSettings() {
     input.type = input.type === "password" ? "text" : "password";
   });
 
-  // Test voice buttons
   for (let i = 0; i < 4; i++) {
     document.getElementById(`narrator-${i}-test`).addEventListener("click", async () => {
-      const name = document.getElementById(`narrator-${i}-name`).value.trim() || `Narrator ${i + 1}`;
+      const name  = document.getElementById(`narrator-${i}-name`).value.trim() || `Narrator ${i + 1}`;
       const voice = document.getElementById(`narrator-${i}-voice`).value;
-      const btn = document.getElementById(`narrator-${i}-test`);
+      const btn   = document.getElementById(`narrator-${i}-test`);
       btn.disabled = true;
       btn.textContent = "…";
       try {
         const blob = await synthesize(`Hello, I am ${name}.`, voice);
         await playBlob(blob);
       } catch (err) {
-        console.error("Test voice error:", err);
+        dbg(`test voice error: ${err.message}`);
       } finally {
         btn.disabled = false;
         btn.textContent = "Test";
@@ -355,10 +368,7 @@ function hideLoader() {
 
 function showLoaderError(msg) {
   const el = document.getElementById("loader-text");
-  if (el) {
-    el.textContent = msg;
-    el.classList.add("error");
-  }
+  if (el) { el.textContent = msg; el.classList.add("error"); }
 }
 
 // ─── Misc helpers ─────────────────────────────────────────────────────────────
@@ -368,15 +378,12 @@ function flashError(index, message) {
   if (!btn) return;
   btn.classList.add("error-flash");
   setTimeout(() => btn.classList.remove("error-flash"), 1500);
-  console.error(`Pedal ${index} error:`, message);
 }
 
 function escHtml(str) {
   return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
 // ─── Entry point ──────────────────────────────────────────────────────────────
