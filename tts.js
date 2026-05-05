@@ -9,8 +9,7 @@ let audioEl = null;
 export async function initTTS(onProgress) {
   dbg("TTS: loading model…");
   tts = await KokoroTTS.from_pretrained("onnx-community/Kokoro-82M-v1.0-ONNX", {
-    dtype: "q8",
-    device: "wasm",   // webgpu OOMs on iPhone; wasm is reliable on iOS Safari
+    dtype: "q4",      // q8 stalls during inference on iOS; q4 halves memory pressure
     progress_callback: (p) => {
       if (p.status === "progress") {
         dbg(`TTS: download ${Math.round((p.progress ?? 0) * 100)}% — ${p.file ?? ""}`);
@@ -27,7 +26,15 @@ export async function initTTS(onProgress) {
 export async function synthesize(text, voice) {
   if (!tts) throw new Error("TTS not initialized");
   dbg(`TTS: synthesize start — voice=${voice} len=${text.length}`);
-  const audio = await tts.generate(text, { voice });
+
+  const TIMEOUT_MS = 30_000;
+  const audio = await Promise.race([
+    tts.generate(text, { voice }),
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`tts.generate() timed out after ${TIMEOUT_MS / 1000}s`)), TIMEOUT_MS)
+    )
+  ]);
+
   dbg(`TTS: generate done — converting to blob`);
   const blob = await Promise.resolve(audio.toBlob());
   dbg(`TTS: blob ready — size=${blob.size} type=${blob.type}`);
