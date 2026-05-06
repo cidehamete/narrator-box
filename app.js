@@ -178,8 +178,6 @@ function startListening(index) {
       runNarrator(index, transcript);
     },
     onError: (err) => {
-      // "aborted" fires when we call stop() ourselves — not a real error, onEnd handles it.
-      if (err.message === "aborted") { dbg("STT: aborted (expected after stop())"); return; }
       activeStt = null;
       dbg(`STT error: ${err.message}`);
       if (pedalState[index] === "listening" || pedalState[index] === "thinking") {

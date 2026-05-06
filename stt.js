@@ -1,5 +1,6 @@
-// Wraps webkitSpeechRecognition for single-utterance capture.
-// iOS Safari requires a user gesture before calling .start() — the pedal tap satisfies this.
+// Wraps webkitSpeechRecognition for tap-to-start / tap-to-stop use on iOS.
+// iOS does not fire onResult after stop() — so we run continuous with interimResults
+// and snapshot the best transcript when the user taps to stop.
 export function createSTT({ onResult, onError, onEnd }) {
   const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!Rec) {
@@ -8,24 +9,38 @@ export function createSTT({ onResult, onError, onEnd }) {
   }
 
   const rec = new Rec();
-  rec.continuous = false;
-  rec.interimResults = false;
+  rec.continuous = true;       // keep listening until we call stop()
+  rec.interimResults = true;   // surface partial results so we can snapshot them
   rec.lang = "en-US";
 
+  let bestTranscript = "";
+
   rec.onresult = (e) => {
-    const transcript = e.results[0][0].transcript;
-    onResult(transcript);
+    // Accumulate the most recent final + interim transcript
+    let transcript = "";
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      transcript += e.results[i][0].transcript;
+    }
+    if (transcript.trim()) bestTranscript = transcript.trim();
   };
 
   rec.onerror = (e) => {
-    // "no-speech" is common and not a fatal error — treat it as empty input
+    if (e.error === "aborted") return; // expected when we call stop() ourselves
     onError(new Error(e.error ?? "STT error"));
   };
 
-  rec.onend = () => onEnd();
+  rec.onend = () => {
+    const transcript = bestTranscript;
+    bestTranscript = "";
+    if (transcript) {
+      onResult(transcript);
+    } else {
+      onEnd(); // nothing captured — caller resets to idle
+    }
+  };
 
   return {
-    start: () => rec.start(),
+    start: () => { bestTranscript = ""; rec.start(); },
     stop:  () => rec.stop(),
     abort: () => rec.abort()
   };
