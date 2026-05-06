@@ -50,27 +50,8 @@
       <!-- Pedals injected by app.js -->
     </div>
 
-    <button id="type-instead-link" class="type-link hidden"
-            onclick="document.getElementById('type-instead-overlay').classList.remove('hidden')">
-      Type instead
-    </button>
   </main>
 
-  <!-- ── Type-instead overlay ── -->
-  <div id="type-instead-overlay" class="overlay hidden">
-    <div class="overlay-card">
-      <h2>Type your line</h2>
-      <form id="type-instead-form">
-        <textarea id="type-instead-input" rows="4"
-                  placeholder="What just happened in the story…"
-                  autocomplete="off" autocorrect="on" spellcheck="true"></textarea>
-        <div class="overlay-actions">
-          <button type="button" id="type-instead-cancel" class="btn-secondary">Cancel</button>
-          <button type="submit" class="btn-primary">Narrate</button>
-        </div>
-      </form>
-    </div>
-  </div>
 
   <!-- ── Settings overlay ── -->
   <div id="settings-overlay" class="overlay hidden">

@@ -180,16 +180,14 @@ function startListening(index) {
     onError: (err) => {
       activeStt = null;
       dbg(`STT error: ${err.message}`);
-      // Only fall back if we haven't already moved past listening
       if (pedalState[index] === "listening" || pedalState[index] === "thinking") {
-        showTypeInstead(index);
+        resetPedal(index);
       }
     },
     onEnd: () => {
       activeStt = null;
-      // Fall back to type-instead only if no transcript arrived (onResult sets state to thinking/speaking)
       if (pedalState[index] === "listening" || pedalState[index] === "thinking") {
-        showTypeInstead(index);
+        resetPedal(index);
       }
     }
   });
@@ -200,7 +198,7 @@ function startListening(index) {
     } catch (err) {
       dbg(`STT start failed: ${err.message}`);
       activeStt = null;
-      showTypeInstead(index);
+      resetPedal(index);
     }
   }
 }
@@ -277,43 +275,10 @@ async function runNarrator(index, userText) {
   }
 }
 
-// ─── Type-instead fallback ────────────────────────────────────────────────────
-
-function showTypeInstead(index) {
-  if (pedalState[index] !== "listening" && pedalState[index] !== "thinking") return;
+function resetPedal(index) {
   setPedalState(index, "idle");
-
-  const overlay = document.getElementById("type-instead-overlay");
-  const input   = document.getElementById("type-instead-input");
-  const form    = document.getElementById("type-instead-form");
-
-  overlay.classList.remove("hidden");
-  input.value = "";
-  input.focus();
-
-  const submit = (e) => {
-    e.preventDefault();
-    const text = input.value.trim();
-    overlay.classList.add("hidden");
-    form.removeEventListener("submit", submit);
-    if (text) {
-      runNarrator(index, text);
-    } else {
-      setPedalState(index, "idle");
-      setOtherPedalsDisabled(index, false);
-      activeIndex = null;
-    }
-  };
-
-  form.addEventListener("submit", submit);
-
-  document.getElementById("type-instead-cancel").onclick = () => {
-    overlay.classList.add("hidden");
-    form.removeEventListener("submit", submit);
-    setPedalState(index, "idle");
-    setOtherPedalsDisabled(index, false);
-    activeIndex = null;
-  };
+  setOtherPedalsDisabled(index, false);
+  activeIndex = null;
 }
 
 // ─── Settings panel ──────────────────────────────────────────────────────────
