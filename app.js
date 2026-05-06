@@ -1,7 +1,7 @@
 import { hydrateSettings, saveSettings, defaultSettings, VOICE_OPTIONS } from "./narrators.js";
 import { respondStream } from "./llm.js";
 import { createSTT } from "./stt.js";
-import { configureTTS, warmupTTS, isConfigured, synthesize, playBlob, cancelPlayback, AudioQueue } from "./tts.js";
+import { configureTTS, warmupTTS, isConfigured, unlockAudio, synthesize, playBlob, cancelPlayback, AudioQueue } from "./tts.js";
 import { dbg, initDebugPanel } from "./debug.js";
 
 // ─── State ───────────────────────────────────────────────────────────────────
@@ -158,6 +158,9 @@ async function handlePedalTap(index) {
       flashError(index, "Set your TTS endpoint + token in ⚙️ settings.");
       return;
     }
+    // Unlock audio synchronously inside the tap gesture before any async work.
+    // iOS Safari blocks play() calls that arrive after the gesture stack unwinds.
+    unlockAudio();
     activeIndex = index;
     setOtherPedalsDisabled(index, true);
     setPedalState(index, "listening");
