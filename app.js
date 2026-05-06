@@ -1,51 +1,92 @@
 import { hydrateSettings, saveSettings, defaultSettings, VOICE_OPTIONS } from "./narrators.js";
 import { respondStream } from "./llm.js";
 import { createSTT } from "./stt.js";
-import { initTTS, synthesize, playBlob, cancelPlayback, AudioQueue } from "./tts.js";
+import { configureTTS, warmupTTS, isConfigured, synthesize, playBlob, cancelPlayback, AudioQueue } from "./tts.js";
 import { dbg, initDebugPanel } from "./debug.js";
 
 // ─── State ───────────────────────────────────────────────────────────────────
 
 let settings = hydrateSettings();
 
-// Per-pedal state: "idle" | "listening" | "thinking" | "speaking"
 const pedalState = [null, null, null, null];
 let activeIndex = null;
 let activeStt   = null;
-let activeQueue = null; // AudioQueue for the current pedal
+let activeQueue = null;
 
 // ─── Boot ────────────────────────────────────────────────────────────────────
 
 async function boot() {
   renderPedals();
   renderSettings();
-  setPedalsEnabled(false);
 
-  dbg(`crossOriginIsolated: ${window.crossOriginIsolated}`);
-  if (!window.crossOriginIsolated) {
-    dbg("WARNING: SharedArrayBuffer unavailable — TTS will be single-threaded");
-  }
+  configureTTS({ endpointUrl: settings.ttsEndpoint, authToken: settings.ttsToken });
 
-  dbg("boot: starting TTS init");
-  try {
-    await initTTS(onTTSProgress);
+  if (!isConfigured()) {
+    // No endpoint set — skip loader, show pedals, they'll error on tap with a clear message
     hideLoader();
     setPedalsEnabled(true);
-    dbg("boot: ready");
-  } catch (err) {
-    dbg(`boot: TTS init failed — ${err.message}`);
-    showLoaderError(`Failed to load voice engine: ${err.message}`);
+    dbg("boot: no TTS endpoint configured — skipping warm-up");
+    return;
   }
+
+  // Warm up with a 60s timeout so a sleeping HF Space has time to wake
+  setLoaderText("Waking voices…");
+  setPedalsEnabled(false);
+  dbg("boot: starting warm-up");
+
+  const WARMUP_TIMEOUT_MS = 60_000;
+  try {
+    await Promise.race([
+      warmupTTS(),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("warm-up timed out after 60s")), WARMUP_TIMEOUT_MS)
+      )
+    ]);
+    dbg("boot: warm-up done — ready");
+    setWakeDot("green");
+  } catch (err) {
+    dbg(`boot: warm-up failed — ${err.message}`);
+    setWakeDot("red");
+    // Still enable pedals — user can retry with 🔥 Wake or just try a tap
+  }
+
+  hideLoader();
+  setPedalsEnabled(true);
 }
 
-function onTTSProgress(progress) {
-  const loaderText = document.getElementById("loader-text");
-  if (!loaderText) return;
-  if (progress.status === "progress") {
-    loaderText.textContent = `Loading voice engine… ${progress.pct}%`;
-  } else if (progress.status === "done") {
-    loaderText.textContent = "Warming up voices…";
-  }
+// ─── Wake button ─────────────────────────────────────────────────────────────
+
+function wireWakeButton() {
+  const btn = document.getElementById("wake-btn");
+  btn.addEventListener("click", async () => {
+    if (!isConfigured()) {
+      dbg("wake: no endpoint configured");
+      setWakeDot("red");
+      return;
+    }
+    btn.disabled = true;
+    setWakeDot("checking");
+    dbg("wake: pinging /health…");
+    try {
+      await Promise.race([
+        warmupTTS(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 60_000))
+      ]);
+      dbg("wake: server warm");
+      setWakeDot("green");
+    } catch (err) {
+      dbg(`wake: failed — ${err.message}`);
+      setWakeDot("red");
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
+function setWakeDot(state) {
+  // state: "" | "checking" | "green" | "red"
+  const dot = document.getElementById("wake-dot");
+  if (dot) dot.dataset.state = state;
 }
 
 // ─── Pedal rendering ─────────────────────────────────────────────────────────
@@ -53,7 +94,6 @@ function onTTSProgress(progress) {
 function renderPedals() {
   const grid = document.getElementById("pedal-grid");
   grid.innerHTML = "";
-
   settings.narrators.forEach((narrator, i) => {
     const btn = document.createElement("button");
     btn.className = "pedal";
@@ -106,12 +146,16 @@ async function handlePedalTap(index) {
 
   if (state === "listening") {
     if (activeStt) activeStt.stop();
-    return; // STT onEnd drives the transition to thinking
+    return;
   }
 
   if (state === "idle") {
     if (!settings.apiKey) {
-      flashError(index, "Set your Anthropic API key in ⚙️ settings first.");
+      flashError(index, "Set your Anthropic API key in ⚙️ settings.");
+      return;
+    }
+    if (!isConfigured()) {
+      flashError(index, "Set your TTS endpoint + token in ⚙️ settings.");
       return;
     }
     activeIndex = index;
@@ -153,10 +197,8 @@ function startListening(index) {
 
 // ─── Narrator run — streaming LLM + sentence-by-sentence TTS ─────────────────
 
-// Flush the audio queue when a sentence boundary is detected in the accumulated buffer.
 function flushSentences(buf, queue, isFinal) {
   while (true) {
-    // Require at least 8 chars before a sentence-ending punctuation + optional quote/paren
     const m = buf.match(/^(.{8,}?[.!?]['")\]]?)(\s+|$)/s);
     if (!m) break;
     const sentence = m[1].trim();
@@ -164,7 +206,6 @@ function flushSentences(buf, queue, isFinal) {
     queue.push(sentence);
     buf = buf.slice(m[0].length);
   }
-  // On final flush, push whatever remains
   if (isFinal && buf.trim()) {
     dbg(`sentence (final): "${buf.trim().slice(0, 60)}"`);
     queue.push(buf.trim());
@@ -196,19 +237,15 @@ async function runNarrator(index, userText) {
       temperature: settings.temperature
     })) {
       if (queue.aborted || activeIndex !== index) break;
-
       buf += chunk;
-
       if (firstChunk) {
         firstChunk = false;
-        dbg(`pedal ${index}: first LLM token received — switching to speaking`);
+        dbg(`pedal ${index}: first token — switching to speaking`);
         setPedalState(index, "speaking");
       }
-
       buf = flushSentences(buf, queue, false);
     }
 
-    // Flush any trailing text
     if (!queue.aborted && activeIndex === index) {
       flushSentences(buf, queue, true);
     }
@@ -218,6 +255,7 @@ async function runNarrator(index, userText) {
   } catch (err) {
     dbg(`pedal ${index}: error — ${err.message}`);
     flashError(index, err.message);
+    setWakeDot("red");
   }
 
   if (activeIndex === index) {
@@ -271,16 +309,18 @@ function showTypeInstead(index) {
 // ─── Settings panel ──────────────────────────────────────────────────────────
 
 function renderSettings() {
-  document.getElementById("settings-apikey").value = settings.apiKey;
-  document.getElementById("settings-model").value = settings.model;
-  document.getElementById("settings-max-tokens").value = settings.maxTokens;
-  document.getElementById("settings-temperature").value = settings.temperature;
+  document.getElementById("settings-tts-endpoint").value = settings.ttsEndpoint ?? "";
+  document.getElementById("settings-tts-token").value    = settings.ttsToken ?? "";
+  document.getElementById("settings-apikey").value       = settings.apiKey;
+  document.getElementById("settings-model").value        = settings.model;
+  document.getElementById("settings-max-tokens").value   = settings.maxTokens;
+  document.getElementById("settings-temperature").value  = settings.temperature;
   document.getElementById("settings-temperature-display").textContent = settings.temperature;
 
   settings.narrators.forEach((narrator, i) => {
-    document.getElementById(`narrator-${i}-name`).value = narrator.name;
+    document.getElementById(`narrator-${i}-name`).value  = narrator.name;
     document.getElementById(`narrator-${i}-prompt`).value = narrator.systemPrompt;
-    document.getElementById(`narrator-${i}-voice`).value = narrator.voice;
+    document.getElementById(`narrator-${i}-voice`).value  = narrator.voice;
   });
 }
 
@@ -295,14 +335,16 @@ function buildSettingsVoiceDropdowns() {
 
 function collectSettings() {
   return {
-    apiKey: document.getElementById("settings-apikey").value.trim(),
-    model: document.getElementById("settings-model").value,
-    maxTokens: parseInt(document.getElementById("settings-max-tokens").value, 10),
+    ttsEndpoint: document.getElementById("settings-tts-endpoint").value.trim(),
+    ttsToken:    document.getElementById("settings-tts-token").value.trim(),
+    apiKey:      document.getElementById("settings-apikey").value.trim(),
+    model:       document.getElementById("settings-model").value,
+    maxTokens:   parseInt(document.getElementById("settings-max-tokens").value, 10),
     temperature: parseFloat(document.getElementById("settings-temperature").value),
-    narrators: settings.narrators.map((_, i) => ({
+    narrators:   settings.narrators.map((_, i) => ({
       id: i + 1,
-      name: document.getElementById(`narrator-${i}-name`).value.trim() || `Narrator ${i + 1}`,
-      voice: document.getElementById(`narrator-${i}-voice`).value,
+      name:         document.getElementById(`narrator-${i}-name`).value.trim() || `Narrator ${i + 1}`,
+      voice:        document.getElementById(`narrator-${i}-voice`).value,
       systemPrompt: document.getElementById(`narrator-${i}-prompt`).value.trim()
     }))
   };
@@ -318,8 +360,10 @@ function wireSettings() {
   document.getElementById("settings-close").addEventListener("click", () => {
     settings = collectSettings();
     saveSettings(settings);
+    configureTTS({ endpointUrl: settings.ttsEndpoint, authToken: settings.ttsToken });
     renderPedals();
     document.getElementById("settings-overlay").classList.add("hidden");
+    setWakeDot("");  // reset dot so user knows to re-test after changing endpoint
   });
 
   document.getElementById("settings-reset").addEventListener("click", () => {
@@ -335,10 +379,14 @@ function wireSettings() {
       parseFloat(e.target.value).toFixed(1);
   });
 
-  document.getElementById("settings-apikey-toggle").addEventListener("click", () => {
-    const input = document.getElementById("settings-apikey");
-    input.type = input.type === "password" ? "text" : "password";
-  });
+  const makeToggle = (inputId, btnId) => {
+    document.getElementById(btnId).addEventListener("click", () => {
+      const input = document.getElementById(inputId);
+      input.type = input.type === "password" ? "text" : "password";
+    });
+  };
+  makeToggle("settings-apikey",   "settings-apikey-toggle");
+  makeToggle("settings-tts-token", "settings-tts-token-toggle");
 
   for (let i = 0; i < 4; i++) {
     document.getElementById(`narrator-${i}-test`).addEventListener("click", async () => {
@@ -366,9 +414,9 @@ function hideLoader() {
   document.getElementById("loader").classList.add("hidden");
 }
 
-function showLoaderError(msg) {
+function setLoaderText(text) {
   const el = document.getElementById("loader-text");
-  if (el) { el.textContent = msg; el.classList.add("error"); }
+  if (el) el.textContent = text;
 }
 
 // ─── Misc helpers ─────────────────────────────────────────────────────────────
@@ -378,6 +426,7 @@ function flashError(index, message) {
   if (!btn) return;
   btn.classList.add("error-flash");
   setTimeout(() => btn.classList.remove("error-flash"), 1500);
+  dbg(`pedal ${index} error: ${message}`);
 }
 
 function escHtml(str) {
@@ -391,5 +440,6 @@ function escHtml(str) {
 document.addEventListener("DOMContentLoaded", () => {
   initDebugPanel();
   wireSettings();
+  wireWakeButton();
   boot();
 });

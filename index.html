@@ -6,9 +6,6 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Narrator Box</title>
-  <!-- Must be first: installs service worker that fakes COOP/COEP headers,
-       enabling SharedArrayBuffer → multi-threaded WASM for Kokoro inference. -->
-  <script src="coi-serviceworker.js"></script>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -16,28 +13,34 @@
   <!-- ── Header ── -->
   <header class="app-header">
     <h1 class="app-title">Narrator Box</h1>
-    <button id="settings-btn" class="icon-btn" aria-label="Open settings">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <circle cx="12" cy="12" r="3"/>
-        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06
-                 a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09
-                 A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83
-                 l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09
-                 A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83
-                 l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09
-                 a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83
-                 l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09
-                 a1.65 1.65 0 0 0-1.51 1z"/>
-      </svg>
-    </button>
+    <div class="header-actions">
+      <button id="wake-btn" class="wake-btn" aria-label="Wake voice server">
+        🔥 <span id="wake-label">Wake</span>
+        <span id="wake-dot" class="wake-dot"></span>
+      </button>
+      <button id="settings-btn" class="icon-btn" aria-label="Open settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06
+                   a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09
+                   A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83
+                   l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09
+                   A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83
+                   l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09
+                   a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83
+                   l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09
+                   a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      </button>
+    </div>
   </header>
 
   <!-- ── Loader overlay ── -->
   <div id="loader" class="overlay loader-overlay">
     <div class="loader-inner">
       <div class="loader-spinner"></div>
-      <p id="loader-text">Loading voice engine… 0%</p>
+      <p id="loader-text">Waking voices…</p>
     </div>
   </div>
 
@@ -78,7 +81,23 @@
       </div>
 
       <section class="settings-section">
-        <h3>API</h3>
+        <h3>Voice Server</h3>
+
+        <label class="field-label" for="settings-tts-endpoint">TTS Endpoint URL</label>
+        <input type="text" id="settings-tts-endpoint"
+               placeholder="https://yourname-narratorbox.hf.space"
+               autocomplete="off" spellcheck="false" />
+
+        <label class="field-label" for="settings-tts-token">TTS Auth Token</label>
+        <div class="input-row">
+          <input type="password" id="settings-tts-token"
+                 placeholder="your-secret-token" autocomplete="off" spellcheck="false" />
+          <button type="button" id="settings-tts-token-toggle" class="btn-secondary">Show</button>
+        </div>
+      </section>
+
+      <section class="settings-section">
+        <h3>LLM</h3>
 
         <label class="field-label" for="settings-apikey">Anthropic API Key</label>
         <div class="input-row">
@@ -104,21 +123,17 @@
 
       <section class="settings-section">
         <h3>Narrators</h3>
-
-        <!-- Narrator slots are identical; repeated four times -->
         <div class="narrator-blocks">
 
           <details class="narrator-block" open>
             <summary>Pedal 1</summary>
             <label class="field-label" for="narrator-0-name">Name</label>
             <input type="text" id="narrator-0-name" />
-
             <label class="field-label" for="narrator-0-voice">Voice</label>
             <div class="input-row">
               <select id="narrator-0-voice"></select>
               <button type="button" id="narrator-0-test" class="btn-secondary">Test</button>
             </div>
-
             <label class="field-label" for="narrator-0-prompt">System prompt</label>
             <textarea id="narrator-0-prompt" rows="4"></textarea>
           </details>
@@ -127,13 +142,11 @@
             <summary>Pedal 2</summary>
             <label class="field-label" for="narrator-1-name">Name</label>
             <input type="text" id="narrator-1-name" />
-
             <label class="field-label" for="narrator-1-voice">Voice</label>
             <div class="input-row">
               <select id="narrator-1-voice"></select>
               <button type="button" id="narrator-1-test" class="btn-secondary">Test</button>
             </div>
-
             <label class="field-label" for="narrator-1-prompt">System prompt</label>
             <textarea id="narrator-1-prompt" rows="4"></textarea>
           </details>
@@ -142,13 +155,11 @@
             <summary>Pedal 3</summary>
             <label class="field-label" for="narrator-2-name">Name</label>
             <input type="text" id="narrator-2-name" />
-
             <label class="field-label" for="narrator-2-voice">Voice</label>
             <div class="input-row">
               <select id="narrator-2-voice"></select>
               <button type="button" id="narrator-2-test" class="btn-secondary">Test</button>
             </div>
-
             <label class="field-label" for="narrator-2-prompt">System prompt</label>
             <textarea id="narrator-2-prompt" rows="4"></textarea>
           </details>
@@ -157,13 +168,11 @@
             <summary>Pedal 4</summary>
             <label class="field-label" for="narrator-3-name">Name</label>
             <input type="text" id="narrator-3-name" />
-
             <label class="field-label" for="narrator-3-voice">Voice</label>
             <div class="input-row">
               <select id="narrator-3-voice"></select>
               <button type="button" id="narrator-3-test" class="btn-secondary">Test</button>
             </div>
-
             <label class="field-label" for="narrator-3-prompt">System prompt</label>
             <textarea id="narrator-3-prompt" rows="4"></textarea>
           </details>
@@ -175,7 +184,7 @@
     </div>
   </div>
 
-  <!-- ── Debug log (hidden by default, tap header title 3× to reveal) ── -->
+  <!-- ── Debug log (hidden by default, tap title 3× to reveal) ── -->
   <div id="debug-panel" class="hidden">
     <div id="debug-header">
       <span>Debug log</span>
