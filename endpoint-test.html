@@ -1,0 +1,58 @@
+<!doctype html>
+<html><body style="font-family:system-ui;padding:20px;max-width:500px;margin:auto">
+<h2>Narrator Box endpoint test</h2>
+<input id="url" value="https://cidehamete2-narratorbox.hf.space" style="width:100%;padding:8px;margin:4px 0">
+<input id="token" placeholder="AUTH_TOKEN" style="width:100%;padding:8px;margin:4px 0">
+<button onclick="checkAuth()" style="width:100%;padding:12px;font-size:16px;margin:4px 0">Check auth (/whoami)</button>
+<pre id="whoami" style="background:#eee;padding:8px;white-space:pre-wrap;word-break:break-all"></pre>
+<hr>
+<input id="text" value="Testing the narrator box." style="width:100%;padding:8px;margin:4px 0">
+<select id="voice" style="width:100%;padding:8px;margin:4px 0">
+  <option>af_bella</option><option>am_michael</option>
+  <option>bf_emma</option><option>bm_george</option>
+</select>
+<button onclick="go()" style="width:100%;padding:12px;font-size:16px">Synthesize & play</button>
+<p id="status"></p>
+<audio id="audio" controls style="width:100%"></audio>
+<script>
+async function checkAuth() {
+  const out = document.getElementById('whoami');
+  const url = document.getElementById('url').value.replace(/\/$/, '');
+  const tok = document.getElementById('token').value.trim();
+  out.textContent = 'Checking…';
+  try {
+    const res = await fetch(url + '/whoami', {
+      headers: { 'X-Auth-Token': tok }
+    });
+    const data = await res.json();
+    out.textContent = JSON.stringify(data, null, 2);
+  } catch (e) { out.textContent = 'Network error: ' + e.message; }
+}
+async function go() {
+  const s = document.getElementById('status');
+  const url = document.getElementById('url').value.replace(/\/$/, '');
+  const tok = document.getElementById('token').value.trim();
+  s.textContent = 'Synthesizing…';
+  const t0 = performance.now();
+  try {
+    const res = await fetch(url + '/synthesize', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Auth-Token': tok
+      },
+      body: JSON.stringify({
+        text: document.getElementById('text').value,
+        voice: document.getElementById('voice').value,
+        speed: 1.0
+      })
+    });
+    if (!res.ok) { s.textContent = 'Error ' + res.status + ': ' + await res.text(); return; }
+    const blob = await res.blob();
+    document.getElementById('audio').src = URL.createObjectURL(blob);
+    s.textContent = 'OK — ' + Math.round(performance.now() - t0) + 'ms';
+    document.getElementById('audio').play();
+  } catch (e) { s.textContent = 'Network error: ' + e.message; }
+}
+</script>
+</body></html>
