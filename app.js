@@ -145,6 +145,9 @@ async function handlePedalTap(index) {
   }
 
   if (state === "listening") {
+    // Show thinking immediately so the user sees a response to their tap.
+    // iOS sometimes fires onEnd without onResult after stop() — handle both.
+    setPedalState(index, "thinking");
     if (activeStt) activeStt.stop();
     return;
   }
@@ -177,11 +180,15 @@ function startListening(index) {
     onError: (err) => {
       activeStt = null;
       dbg(`STT error: ${err.message}`);
-      showTypeInstead(index);
+      // Only fall back if we haven't already moved past listening
+      if (pedalState[index] === "listening" || pedalState[index] === "thinking") {
+        showTypeInstead(index);
+      }
     },
     onEnd: () => {
-      if (pedalState[index] === "listening") {
-        activeStt = null;
+      activeStt = null;
+      // Fall back to type-instead only if no transcript arrived (onResult sets state to thinking/speaking)
+      if (pedalState[index] === "listening" || pedalState[index] === "thinking") {
         showTypeInstead(index);
       }
     }
@@ -273,7 +280,7 @@ async function runNarrator(index, userText) {
 // ─── Type-instead fallback ────────────────────────────────────────────────────
 
 function showTypeInstead(index) {
-  if (pedalState[index] !== "listening") return;
+  if (pedalState[index] !== "listening" && pedalState[index] !== "thinking") return;
   setPedalState(index, "idle");
 
   const overlay = document.getElementById("type-instead-overlay");
