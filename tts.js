@@ -3,32 +3,22 @@
 // AudioQueue and playBlob are unchanged from the streaming-perf pass.
 import { dbg } from "./debug.js";
 
-let endpoint = null;
-let token    = null;
-let currentAudio = null;
-let audioUnlocked = false;
+let endpoint    = null;
+let token       = null;
+let audioCtx    = null;  // Web Audio API context — once created in a gesture it stays unlocked
+let currentNode = null;  // currently playing AudioBufferSourceNode
 
-// iOS Safari blocks async play() calls that aren't in a user-gesture call stack.
-// Fix: call this synchronously inside the tap handler to unlock audio for the session.
+// Create (or resume) an AudioContext during the tap gesture.
+// Unlike HTMLAudioElement.play(), a running AudioContext stays unlocked for the whole session —
+// subsequent playback calls work even seconds later without needing another gesture.
 export function unlockAudio() {
-  if (audioUnlocked) return;
-  // Smallest valid WAV: 44-byte header + 0 samples
-  const wav = new Uint8Array([
-    0x52,0x49,0x46,0x46, 0x24,0x00,0x00,0x00, 0x57,0x41,0x56,0x45,
-    0x66,0x6d,0x74,0x20, 0x10,0x00,0x00,0x00, 0x01,0x00,0x01,0x00,
-    0x44,0xac,0x00,0x00, 0x88,0x58,0x01,0x00, 0x02,0x00,0x10,0x00,
-    0x64,0x61,0x74,0x61, 0x00,0x00,0x00,0x00
-  ]);
-  const blob = new Blob([wav], { type: "audio/wav" });
-  const url  = URL.createObjectURL(blob);
-  const el   = document.createElement("audio");
-  el.setAttribute("playsinline", "");
-  el.src = url;
-  document.body.appendChild(el);
-  el.play()
-    .then(() => { audioUnlocked = true; dbg("TTS: audio unlocked"); })
-    .catch(() => {})
-    .finally(() => { URL.revokeObjectURL(url); el.remove(); });
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    dbg("TTS: AudioContext created");
+  }
+  if (audioCtx.state === "suspended") {
+    audioCtx.resume().then(() => dbg("TTS: AudioContext resumed"));
+  }
 }
 
 export function configureTTS({ endpointUrl, authToken }) {
@@ -83,45 +73,35 @@ export async function synthesize(text, voice, speed = 1.0) {
   return blob;
 }
 
-// Play a blob. Must append to DOM — iOS Safari won't fire onended on detached elements.
-export function playBlob(blob) {
+// Decode a WAV blob and play it through the Web Audio API.
+// AudioContext stays unlocked for the full session after unlockAudio() is called once.
+export async function playBlob(blob) {
+  if (!audioCtx) throw new Error("AudioContext not initialised — call unlockAudio() first");
+
+  const arrayBuf = await blob.arrayBuffer();
+  const decoded  = await audioCtx.decodeAudioData(arrayBuf);
+
   return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(blob);
-    const el  = document.createElement("audio");
-    el.setAttribute("playsinline", "");
-    el.style.display = "none";
-    el.src = url;
+    const source = audioCtx.createBufferSource();
+    source.buffer = decoded;
+    source.connect(audioCtx.destination);
+    currentNode = source;
 
-    currentAudio = el;
-
-    const cleanup = () => {
-      URL.revokeObjectURL(url);
-      el.remove();
-      if (currentAudio === el) currentAudio = null;
+    source.onended = () => {
+      dbg("TTS: audio ended");
+      if (currentNode === source) currentNode = null;
+      resolve();
     };
 
-    el.onplay   = () => dbg("TTS: audio playing");
-    el.onended  = () => { dbg("TTS: audio ended"); cleanup(); resolve(); };
-    el.onerror  = () => {
-      const code = el.error?.code;
-      const msg  = el.error?.message ?? "unknown";
-      dbg(`TTS: audio error code=${code} msg=${msg}`);
-      cleanup();
-      reject(new Error(`Audio error (code ${code}): ${msg}`));
-    };
-
-    document.body.appendChild(el);
-    el.play()
-      .then(() => dbg("TTS: play() resolved"))
-      .catch((err) => { dbg(`TTS: play() rejected — ${err.message}`); cleanup(); reject(err); });
+    dbg("TTS: audio playing");
+    source.start(0);
   });
 }
 
 export function cancelPlayback() {
-  if (currentAudio) {
-    currentAudio.pause();
-    currentAudio.remove();
-    currentAudio = null;
+  if (currentNode) {
+    try { currentNode.stop(); } catch {}
+    currentNode = null;
     dbg("TTS: playback cancelled");
   }
 }
