@@ -1,22 +1,11 @@
-# Narrator Box
+# Grace
 
-A live-storytelling tool for stage use. Four narrator "pedals" on your iPhone screen — tap one, speak a line from your story, and an AI narrator responds in character using a local voice synthesizer.
+A live-storytelling companion built around one character: Grace, a four-wheeled delivery robot from Los Angeles who dreams of writing famous books. Two faces, one character:
 
-Built for iPhone 15 Pro + Safari. No backend, no build step. Deploys straight to GitHub Pages.
+- **Stage** — one pedal. Tap, speak a line, and Grace answers in her own voice through the speaker. Built for live readings; the round-trip targets under 4 seconds.
+- **Street** — her experience layer. Hand her glimpses of the world (photos, spoken words, notes, places) and she writes journal pages and tends a persistent memory in a GitHub repo — which her stage voice draws on live. See [GRACE.md](GRACE.md).
 
----
-
-## What it does
-
-Each pedal is a narrator persona with its own voice and system prompt. Tap to start listening, tap again to stop — the app transcribes your line, sends it to Claude, synthesizes the response with Kokoro TTS, and plays it back through the speaker. The whole round-trip targets under 4 seconds.
-
-Default personas:
-- **The Chronicler** — dramatic, ominous
-- **The Skeptic** — dry, deadpan
-- **The Memoirist** — tender, reflective
-- **The Fool** — comic, irreverent
-
-All four are fully editable in the settings panel.
+Built for iPhone 15 Pro + Safari. No backend, no build step. Deploys straight to GitHub Pages. (Grew out of the four-pedal Narrator Box; the app is now hers alone.)
 
 ---
 
@@ -76,17 +65,16 @@ Use the **Test** button next to each voice dropdown in settings to audition befo
 
 ---
 
-## Customizing narrators
+## Customizing Grace
 
-Open ⚙️ settings. Each pedal has:
-- **Name** — displayed on the pedal button
-- **Voice** — Kokoro voice ID (see table above)
-- **System prompt** — the persona instructions sent to Claude
+Open ⚙️ settings → Grace:
+- **Her voice** — Kokoro voice ID (see table above), used on stage and for reading her journal pages
+- **Reflection model** — the model that writes her journal pages (Sonnet recommended)
+- **Her voice (system prompt)** — her core persona, editable; stage responses and journal reflections both build on it
 
-Tips for system prompts:
-- Keep the character voice tight and specific — Claude will improvise the actual line
-- End with a brevity instruction if you want very short responses
-- The app appends `"Respond with no more than two sentences. Speak in character only."` automatically, so you don't need to include it
+Notes:
+- The app appends a two-sentence brevity limit to stage responses automatically; journal pages are exempt and run 120–250 words
+- Her stage responses automatically include her current memory from the Street, so what she has seen informs what she says
 
 ---
 

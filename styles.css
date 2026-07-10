@@ -533,5 +533,152 @@ input[type="range"] {
   flex: 1;
 }
 
+/* ── Solo pedal (Grace alone on stage) ────────────────────────────────────── */
+.pedal-grid.solo { grid-template-columns: 1fr; }
+.pedal.solo {
+  min-height: 240px;
+}
+.pedal.solo .pedal-name {
+  font-size: 1.6rem;
+  letter-spacing: 0.02em;
+}
+
+/* ── View tabs (Stage / Street) ───────────────────────────────────────────── */
+.view-tabs {
+  display: flex;
+  gap: 8px;
+  padding: 10px 20px 0;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.view-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-dim);
+  font-size: 0.95rem;
+  font-weight: 600;
+  padding: 8px 14px 10px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.view-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.view { width: 100%; max-width: 480px; }
+
+/* Street mode: long journal pages scroll from the top instead of centering */
+.main-content.street-mode {
+  justify-content: flex-start;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ── Glimpse composer (the Street) ────────────────────────────────────────── */
+.glimpse-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+.composer-hint {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  font-style: italic;
+}
+.composer-row {
+  display: flex;
+  gap: 8px;
+}
+.sense-btn { flex: 1; }
+.sense-btn.recording {
+  background: var(--listening);
+  border-color: var(--listening-2);
+  color: #f5a5a5;
+  animation: pulse-listening 1s ease-in-out infinite;
+}
+.glimpse-preview {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  max-height: 260px;
+  object-fit: cover;
+}
+.loc-label {
+  font-size: 0.82rem;
+  color: var(--accent);
+}
+.give-btn { width: 100%; padding: 14px; font-size: 1rem; }
+.glimpse-status {
+  font-size: 0.82rem;
+  color: var(--text-dim);
+  min-height: 1.2em;
+  text-align: center;
+}
+.glimpse-status.error { color: #ff6b6b; }
+
+/* ── Journal feed (her pages) ─────────────────────────────────────────────── */
+.journal-feed { margin-top: 20px; }
+.feed-title {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+  margin-bottom: 12px;
+}
+.feed-empty {
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  font-style: italic;
+}
+.journal-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 14px;
+}
+.journal-card.fresh { border-color: var(--accent); }
+.journal-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  gap: 8px;
+}
+.journal-stamp {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  letter-spacing: 0.03em;
+}
+.journal-speak { padding: 6px 10px; font-size: 0.8rem; }
+.journal-page p {
+  font-size: 0.95rem;
+  line-height: 1.6;
+  margin-bottom: 0.7em;
+}
+.journal-page p:last-child { margin-bottom: 0; }
+
+/* ── Memory checkbox row ──────────────────────────────────────────────────── */
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  margin-top: 12px;
+  cursor: pointer;
+}
+.check-row input[type="checkbox"] {
+  width: auto;
+  accent-color: var(--accent);
+}
+
 /* ── Utility ──────────────────────────────────────────────────────────────── */
 .hidden { display: none !important; }

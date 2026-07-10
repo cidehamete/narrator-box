@@ -1,37 +1,36 @@
 import { hydrateSettings, saveSettings, defaultSettings, VOICE_OPTIONS } from "./narrators.js";
 import { respondStream } from "./llm.js";
 import { createSTT } from "./stt.js";
-import { configureTTS, warmupTTS, isConfigured, unlockAudio, synthesize, playBlob, cancelPlayback, AudioQueue } from "./tts.js";
+import { configureTTS, warmupTTS, isConfigured, unlockAudio, synthesize, playBlob, AudioQueue } from "./tts.js";
+import { initGrace, getMemoryDigest, refreshMemory, loadJournalFeed } from "./grace.js";
 import { dbg, initDebugPanel } from "./debug.js";
 
 // ─── State ───────────────────────────────────────────────────────────────────
 
 let settings = hydrateSettings();
 
-const pedalState = [null, null, null, null];
-let activeIndex = null;
+let pedalState  = "idle";   // idle | listening | thinking | speaking
 let activeStt   = null;
 let activeQueue = null;
 
 // ─── Boot ────────────────────────────────────────────────────────────────────
 
 async function boot() {
-  renderPedals();
+  renderPedal();
   renderSettings();
 
   configureTTS({ endpointUrl: settings.ttsEndpoint, authToken: settings.ttsToken });
 
   if (!isConfigured()) {
-    // No endpoint set — skip loader, show pedals, they'll error on tap with a clear message
     hideLoader();
-    setPedalsEnabled(true);
+    setPedalEnabled(true);
     dbg("boot: no TTS endpoint configured — skipping warm-up");
     return;
   }
 
   // Warm up with a 60s timeout so a sleeping HF Space has time to wake
-  setLoaderText("Waking voices…");
-  setPedalsEnabled(false);
+  setLoaderText("Waking Grace…");
+  setPedalEnabled(false);
   dbg("boot: starting warm-up");
 
   const WARMUP_TIMEOUT_MS = 60_000;
@@ -47,11 +46,10 @@ async function boot() {
   } catch (err) {
     dbg(`boot: warm-up failed — ${err.message}`);
     setWakeDot("red");
-    // Still enable pedals — user can retry with 🔥 Wake or just try a tap
   }
 
   hideLoader();
-  setPedalsEnabled(true);
+  setPedalEnabled(true);
 }
 
 // ─── Wake button ─────────────────────────────────────────────────────────────
@@ -84,111 +82,88 @@ function wireWakeButton() {
 }
 
 function setWakeDot(state) {
-  // state: "" | "checking" | "green" | "red"
   const dot = document.getElementById("wake-dot");
   if (dot) dot.dataset.state = state;
 }
 
-// ─── Pedal rendering ─────────────────────────────────────────────────────────
+// ─── Grace's pedal ───────────────────────────────────────────────────────────
 
-function renderPedals() {
+function renderPedal() {
   const grid = document.getElementById("pedal-grid");
-  grid.innerHTML = "";
-  settings.narrators.forEach((narrator, i) => {
-    const btn = document.createElement("button");
-    btn.className = "pedal";
-    btn.id = `pedal-${i}`;
-    btn.dataset.index = i;
-    btn.innerHTML = `
-      <span class="pedal-name">${escHtml(narrator.name)}</span>
-      <span class="pedal-voice">${escHtml(narrator.voice)}</span>
+  grid.classList.add("solo");
+  grid.innerHTML = `
+    <button class="pedal solo" id="pedal-grace">
+      <span class="pedal-name">Grace</span>
+      <span class="pedal-voice">${escHtml(settings.grace.voice)}</span>
       <span class="pedal-status-label">idle</span>
       <span class="pedal-indicator"></span>
-    `;
-    btn.addEventListener("click", () => handlePedalTap(i));
-    grid.appendChild(btn);
-    setPedalState(i, "idle");
-  });
+    </button>
+  `;
+  document.getElementById("pedal-grace").addEventListener("click", handlePedalTap);
+  setPedalState("idle");
 }
 
-function setPedalState(index, state) {
-  pedalState[index] = state;
-  const btn = document.getElementById(`pedal-${index}`);
+function setPedalState(state) {
+  pedalState = state;
+  const btn = document.getElementById("pedal-grace");
   if (!btn) return;
   btn.dataset.state = state;
   btn.querySelector(".pedal-status-label").textContent = state;
 }
 
-function setPedalsEnabled(enabled) {
-  document.querySelectorAll(".pedal").forEach(btn => { btn.disabled = !enabled; });
+function setPedalEnabled(enabled) {
+  const btn = document.getElementById("pedal-grace");
+  if (btn) btn.disabled = !enabled;
 }
 
-function setOtherPedalsDisabled(activeIdx, disabled) {
-  document.querySelectorAll(".pedal").forEach(btn => {
-    if (parseInt(btn.dataset.index, 10) !== activeIdx) btn.disabled = disabled;
-  });
-}
-
-// ─── Pedal tap handler (state machine) ───────────────────────────────────────
-
-async function handlePedalTap(index) {
-  const state = pedalState[index];
-
-  if (state === "speaking" || state === "thinking") {
+// Tap state machine: idle → listening → thinking → speaking → idle
+async function handlePedalTap() {
+  if (pedalState === "speaking" || pedalState === "thinking") {
     activeQueue?.abort();
     activeQueue = null;
-    setPedalState(index, "idle");
-    setOtherPedalsDisabled(index, false);
-    activeIndex = null;
-    dbg(`pedal ${index}: cancelled by tap`);
+    setPedalState("idle");
+    dbg("pedal: cancelled by tap");
     return;
   }
 
-  if (state === "listening") {
+  if (pedalState === "listening") {
     // Show thinking immediately so the user sees a response to their tap.
     // iOS sometimes fires onEnd without onResult after stop() — handle both.
-    setPedalState(index, "thinking");
+    setPedalState("thinking");
     if (activeStt) activeStt.stop();
     return;
   }
 
-  if (state === "idle") {
+  if (pedalState === "idle") {
     if (!settings.apiKey) {
-      flashError(index, "Set your Anthropic API key in ⚙️ settings.");
+      flashError("Set your Anthropic API key in ⚙️ settings.");
       return;
     }
     if (!isConfigured()) {
-      flashError(index, "Set your TTS endpoint + token in ⚙️ settings.");
+      flashError("Set your TTS endpoint + token in ⚙️ settings.");
       return;
     }
     // Unlock audio synchronously inside the tap gesture before any async work.
-    // iOS Safari blocks play() calls that arrive after the gesture stack unwinds.
     unlockAudio();
-    activeIndex = index;
-    setOtherPedalsDisabled(index, true);
-    setPedalState(index, "listening");
-    startListening(index);
+    setPedalState("listening");
+    startListening();
   }
 }
 
-function startListening(index) {
+function startListening() {
   activeStt = createSTT({
     onResult: (transcript) => {
       activeStt = null;
-      runNarrator(index, transcript);
+      runGrace(transcript);
     },
     onError: (err) => {
       activeStt = null;
       dbg(`STT error: ${err.message}`);
-      if (pedalState[index] === "listening" || pedalState[index] === "thinking") {
-        resetPedal(index);
-      }
+      if (pedalState === "listening" || pedalState === "thinking") setPedalState("idle");
     },
     onEnd: () => {
       activeStt = null;
-      if (pedalState[index] === "listening" || pedalState[index] === "thinking") {
-        resetPedal(index);
-      }
+      if (pedalState === "listening" || pedalState === "thinking") setPedalState("idle");
     }
   });
 
@@ -198,12 +173,12 @@ function startListening(index) {
     } catch (err) {
       dbg(`STT start failed: ${err.message}`);
       activeStt = null;
-      resetPedal(index);
+      setPedalState("idle");
     }
   }
 }
 
-// ─── Narrator run — streaming LLM + sentence-by-sentence TTS ─────────────────
+// ─── Grace run — streaming LLM + sentence-by-sentence TTS ────────────────────
 
 function flushSentences(buf, queue, isFinal) {
   while (true) {
@@ -222,15 +197,17 @@ function flushSentences(buf, queue, isFinal) {
   return buf;
 }
 
-async function runNarrator(index, userText) {
-  if (activeIndex !== index) return;
+async function runGrace(userText) {
+  setPedalState("thinking");
+  dbg(`pedal: thinking — "${userText.slice(0, 60)}"`);
 
-  setPedalState(index, "thinking");
-  dbg(`pedal ${index}: thinking — "${userText.slice(0, 60)}"`);
-
-  const narrator = settings.narrators[index];
-  const queue = new AudioQueue(narrator.voice);
+  const queue = new AudioQueue(settings.grace.voice);
   activeQueue = queue;
+
+  // Her stage voice always carries the life she has accumulated in the Street.
+  let systemPrompt = settings.grace.systemPrompt;
+  const digest = getMemoryDigest();
+  if (digest) systemPrompt += digest;
 
   let buf = "";
   let firstChunk = true;
@@ -239,46 +216,38 @@ async function runNarrator(index, userText) {
     for await (const chunk of respondStream({
       apiKey: settings.apiKey,
       model: settings.model,
-      systemPrompt: narrator.systemPrompt,
+      systemPrompt,
       userText,
       maxTokens: settings.maxTokens,
       temperature: settings.temperature
     })) {
-      if (queue.aborted || activeIndex !== index) break;
+      if (queue.aborted) break;
       buf += chunk;
       if (firstChunk) {
         firstChunk = false;
-        dbg(`pedal ${index}: first token — switching to speaking`);
-        setPedalState(index, "speaking");
+        dbg("pedal: first token — switching to speaking");
+        setPedalState("speaking");
       }
       buf = flushSentences(buf, queue, false);
     }
 
-    if (!queue.aborted && activeIndex === index) {
+    if (!queue.aborted) {
       flushSentences(buf, queue, true);
     }
 
     await queue.drain();
 
   } catch (err) {
-    dbg(`pedal ${index}: error — ${err.message}`);
-    flashError(index, err.message);
+    dbg(`pedal: error — ${err.message}`);
+    flashError(err.message);
     setWakeDot("red");
   }
 
-  if (activeIndex === index) {
+  if (activeQueue === queue) {
     activeQueue = null;
-    setPedalState(index, "idle");
-    setOtherPedalsDisabled(index, false);
-    activeIndex = null;
-    dbg(`pedal ${index}: back to idle`);
+    setPedalState("idle");
+    dbg("pedal: back to idle");
   }
-}
-
-function resetPedal(index) {
-  setPedalState(index, "idle");
-  setOtherPedalsDisabled(index, false);
-  activeIndex = null;
 }
 
 // ─── Settings panel ──────────────────────────────────────────────────────────
@@ -292,20 +261,20 @@ function renderSettings() {
   document.getElementById("settings-temperature").value  = settings.temperature;
   document.getElementById("settings-temperature-display").textContent = settings.temperature;
 
-  settings.narrators.forEach((narrator, i) => {
-    document.getElementById(`narrator-${i}-name`).value  = narrator.name;
-    document.getElementById(`narrator-${i}-prompt`).value = narrator.systemPrompt;
-    document.getElementById(`narrator-${i}-voice`).value  = narrator.voice;
-  });
+  document.getElementById("settings-gh-token").value  = settings.github?.token ?? "";
+  document.getElementById("settings-gh-repo").value   = settings.github?.repo ?? "";
+  document.getElementById("settings-gh-branch").value = settings.github?.branch ?? "main";
+  document.getElementById("settings-gh-path").value   = settings.github?.basePath ?? "grace";
+
+  document.getElementById("settings-grace-voice").value  = settings.grace?.voice ?? "af_sky";
+  document.getElementById("settings-grace-model").value  = settings.grace?.reflectModel ?? "claude-sonnet-4-6";
+  document.getElementById("settings-grace-prompt").value = settings.grace?.systemPrompt ?? "";
 }
 
-function buildSettingsVoiceDropdowns() {
-  for (let i = 0; i < 4; i++) {
-    const sel = document.getElementById(`narrator-${i}-voice`);
-    sel.innerHTML = VOICE_OPTIONS.map(v =>
-      `<option value="${v.value}">${escHtml(v.label)}</option>`
-    ).join("");
-  }
+function buildGraceVoiceDropdown() {
+  document.getElementById("settings-grace-voice").innerHTML = VOICE_OPTIONS.map(v =>
+    `<option value="${v.value}">${escHtml(v.label)}</option>`
+  ).join("");
 }
 
 function collectSettings() {
@@ -316,17 +285,23 @@ function collectSettings() {
     model:       document.getElementById("settings-model").value,
     maxTokens:   parseInt(document.getElementById("settings-max-tokens").value, 10),
     temperature: parseFloat(document.getElementById("settings-temperature").value),
-    narrators:   settings.narrators.map((_, i) => ({
-      id: i + 1,
-      name:         document.getElementById(`narrator-${i}-name`).value.trim() || `Narrator ${i + 1}`,
-      voice:        document.getElementById(`narrator-${i}-voice`).value,
-      systemPrompt: document.getElementById(`narrator-${i}-prompt`).value.trim()
-    }))
+    github: {
+      token:    document.getElementById("settings-gh-token").value.trim(),
+      repo:     document.getElementById("settings-gh-repo").value.trim(),
+      branch:   document.getElementById("settings-gh-branch").value.trim() || "main",
+      basePath: document.getElementById("settings-gh-path").value.trim() || "grace"
+    },
+    grace: {
+      voice:        document.getElementById("settings-grace-voice").value,
+      reflectModel: document.getElementById("settings-grace-model").value,
+      systemPrompt: document.getElementById("settings-grace-prompt").value.trim()
+                    || defaultSettings().grace.systemPrompt
+    }
   };
 }
 
 function wireSettings() {
-  buildSettingsVoiceDropdowns();
+  buildGraceVoiceDropdown();
 
   document.getElementById("settings-btn").addEventListener("click", () => {
     document.getElementById("settings-overlay").classList.remove("hidden");
@@ -336,17 +311,19 @@ function wireSettings() {
     settings = collectSettings();
     saveSettings(settings);
     configureTTS({ endpointUrl: settings.ttsEndpoint, authToken: settings.ttsToken });
-    renderPedals();
+    renderPedal();
     document.getElementById("settings-overlay").classList.add("hidden");
     setWakeDot("");  // reset dot so user knows to re-test after changing endpoint
+    // GitHub config may have changed — re-sync Grace's memory and pages.
+    refreshMemory().then(() => loadJournalFeed()).catch(err => dbg(`grace re-sync: ${err.message}`));
   });
 
   document.getElementById("settings-reset").addEventListener("click", () => {
-    if (!confirm("Reset all settings to defaults?")) return;
+    if (!confirm("Reset all settings to defaults? (This clears your API keys too.)")) return;
     settings = defaultSettings();
     saveSettings(settings);
     renderSettings();
-    renderPedals();
+    renderPedal();
   });
 
   document.getElementById("settings-temperature").addEventListener("input", (e) => {
@@ -360,27 +337,50 @@ function wireSettings() {
       input.type = input.type === "password" ? "text" : "password";
     });
   };
-  makeToggle("settings-apikey",   "settings-apikey-toggle");
+  makeToggle("settings-apikey",    "settings-apikey-toggle");
   makeToggle("settings-tts-token", "settings-tts-token-toggle");
+  makeToggle("settings-gh-token",  "settings-gh-token-toggle");
 
-  for (let i = 0; i < 4; i++) {
-    document.getElementById(`narrator-${i}-test`).addEventListener("click", async () => {
-      const name  = document.getElementById(`narrator-${i}-name`).value.trim() || `Narrator ${i + 1}`;
-      const voice = document.getElementById(`narrator-${i}-voice`).value;
-      const btn   = document.getElementById(`narrator-${i}-test`);
-      btn.disabled = true;
-      btn.textContent = "…";
-      try {
-        const blob = await synthesize(`Hello, I am ${name}.`, voice);
-        await playBlob(blob);
-      } catch (err) {
-        dbg(`test voice error: ${err.message}`);
-      } finally {
-        btn.disabled = false;
-        btn.textContent = "Test";
-      }
-    });
-  }
+  document.getElementById("settings-grace-voice-test").addEventListener("click", async () => {
+    const voice = document.getElementById("settings-grace-voice").value;
+    const btn   = document.getElementById("settings-grace-voice-test");
+    btn.disabled = true;
+    btn.textContent = "…";
+    try {
+      unlockAudio();
+      const blob = await synthesize("Hello, dear friend. It is I, Grace.", voice);
+      await playBlob(blob);
+    } catch (err) {
+      dbg(`grace voice test error: ${err.message}`);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Test";
+    }
+  });
+}
+
+// ─── View tabs (Stage / Street) ───────────────────────────────────────────────
+
+function wireTabs() {
+  const stageTab   = document.getElementById("tab-stage");
+  const streetTab  = document.getElementById("tab-street");
+  const stageView  = document.getElementById("stage-view");
+  const streetView = document.getElementById("street-view");
+  const main       = document.querySelector(".main-content");
+
+  const show = (street) => {
+    stageView.classList.toggle("hidden", street);
+    streetView.classList.toggle("hidden", !street);
+    stageTab.classList.toggle("active", !street);
+    streetTab.classList.toggle("active", street);
+    main.classList.toggle("street-mode", street);
+  };
+  stageTab.addEventListener("click", () => show(false));
+  streetTab.addEventListener("click", () => {
+    // Unlock audio inside the gesture so "Read" buttons work later.
+    unlockAudio();
+    show(true);
+  });
 }
 
 // ─── Loader helpers ───────────────────────────────────────────────────────────
@@ -396,16 +396,16 @@ function setLoaderText(text) {
 
 // ─── Misc helpers ─────────────────────────────────────────────────────────────
 
-function flashError(index, message) {
-  const btn = document.getElementById(`pedal-${index}`);
+function flashError(message) {
+  const btn = document.getElementById("pedal-grace");
   if (!btn) return;
   btn.classList.add("error-flash");
   setTimeout(() => btn.classList.remove("error-flash"), 1500);
-  dbg(`pedal ${index} error: ${message}`);
+  dbg(`pedal error: ${message}`);
 }
 
 function escHtml(str) {
-  return str
+  return String(str)
     .replace(/&/g, "&amp;").replace(/</g, "&lt;")
     .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
@@ -416,5 +416,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initDebugPanel();
   wireSettings();
   wireWakeButton();
+  wireTabs();
+  initGrace(() => settings);
   boot();
 });

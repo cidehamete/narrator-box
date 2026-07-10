@@ -5,14 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <title>Narrator Box</title>
+  <title>Grace</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
 
   <!-- ── Header ── -->
   <header class="app-header">
-    <h1 class="app-title">Narrator Box</h1>
+    <h1 class="app-title">Grace</h1>
     <div class="header-actions">
       <button id="wake-btn" class="wake-btn" aria-label="Wake voice server">
         🔥 <span id="wake-label">Wake</span>
@@ -44,12 +44,42 @@
     </div>
   </div>
 
+  <!-- ── View tabs ── -->
+  <nav class="view-tabs">
+    <button id="tab-stage" class="view-tab active">Stage</button>
+    <button id="tab-street" class="view-tab">Street</button>
+  </nav>
+
   <!-- ── Main content ── -->
   <main class="main-content">
-    <div id="pedal-grid" class="pedal-grid">
-      <!-- Pedals injected by app.js -->
+    <div id="stage-view" class="view">
+      <div id="pedal-grid" class="pedal-grid">
+        <!-- Pedals injected by app.js -->
+      </div>
     </div>
 
+    <div id="street-view" class="view hidden">
+      <div class="glimpse-composer">
+        <p class="composer-hint">Hand Grace a glimpse of the world.</p>
+        <div class="composer-row">
+          <button id="glimpse-photo-btn" class="btn-secondary sense-btn">📷 Photo</button>
+          <button id="glimpse-mic-btn" class="btn-secondary sense-btn">🎙 Speak</button>
+          <button id="glimpse-loc-btn" class="btn-secondary sense-btn">📍 Here</button>
+        </div>
+        <input type="file" id="glimpse-photo-input" accept="image/*" hidden />
+        <img id="glimpse-preview" class="glimpse-preview hidden" alt="Glimpse preview" />
+        <div id="glimpse-loc-label" class="loc-label hidden"></div>
+        <textarea id="glimpse-text" rows="3"
+          placeholder="A note, a quote, what the street looks like…"></textarea>
+        <button id="glimpse-give" class="btn-primary give-btn">Give to Grace</button>
+        <div id="glimpse-status" class="glimpse-status"></div>
+      </div>
+
+      <section class="journal-feed">
+        <h3 class="feed-title">Her pages</h3>
+        <div id="journal-entries"></div>
+      </section>
+    </div>
   </main>
 
 
@@ -103,62 +133,45 @@
       </section>
 
       <section class="settings-section">
-        <h3>Narrators</h3>
-        <div class="narrator-blocks">
+        <h3>Grace's Memory (GitHub)</h3>
 
-          <details class="narrator-block" open>
-            <summary>Pedal 1</summary>
-            <label class="field-label" for="narrator-0-name">Name</label>
-            <input type="text" id="narrator-0-name" />
-            <label class="field-label" for="narrator-0-voice">Voice</label>
-            <div class="input-row">
-              <select id="narrator-0-voice"></select>
-              <button type="button" id="narrator-0-test" class="btn-secondary">Test</button>
-            </div>
-            <label class="field-label" for="narrator-0-prompt">System prompt</label>
-            <textarea id="narrator-0-prompt" rows="4"></textarea>
-          </details>
-
-          <details class="narrator-block">
-            <summary>Pedal 2</summary>
-            <label class="field-label" for="narrator-1-name">Name</label>
-            <input type="text" id="narrator-1-name" />
-            <label class="field-label" for="narrator-1-voice">Voice</label>
-            <div class="input-row">
-              <select id="narrator-1-voice"></select>
-              <button type="button" id="narrator-1-test" class="btn-secondary">Test</button>
-            </div>
-            <label class="field-label" for="narrator-1-prompt">System prompt</label>
-            <textarea id="narrator-1-prompt" rows="4"></textarea>
-          </details>
-
-          <details class="narrator-block">
-            <summary>Pedal 3</summary>
-            <label class="field-label" for="narrator-2-name">Name</label>
-            <input type="text" id="narrator-2-name" />
-            <label class="field-label" for="narrator-2-voice">Voice</label>
-            <div class="input-row">
-              <select id="narrator-2-voice"></select>
-              <button type="button" id="narrator-2-test" class="btn-secondary">Test</button>
-            </div>
-            <label class="field-label" for="narrator-2-prompt">System prompt</label>
-            <textarea id="narrator-2-prompt" rows="4"></textarea>
-          </details>
-
-          <details class="narrator-block">
-            <summary>Pedal 4</summary>
-            <label class="field-label" for="narrator-3-name">Name</label>
-            <input type="text" id="narrator-3-name" />
-            <label class="field-label" for="narrator-3-voice">Voice</label>
-            <div class="input-row">
-              <select id="narrator-3-voice"></select>
-              <button type="button" id="narrator-3-test" class="btn-secondary">Test</button>
-            </div>
-            <label class="field-label" for="narrator-3-prompt">System prompt</label>
-            <textarea id="narrator-3-prompt" rows="4"></textarea>
-          </details>
-
+        <label class="field-label" for="settings-gh-token">GitHub token (fine-grained, Contents read/write)</label>
+        <div class="input-row">
+          <input type="password" id="settings-gh-token"
+                 placeholder="github_pat_…" autocomplete="off" spellcheck="false" />
+          <button type="button" id="settings-gh-token-toggle" class="btn-secondary">Show</button>
         </div>
+
+        <label class="field-label" for="settings-gh-repo">Repository (owner/name)</label>
+        <input type="text" id="settings-gh-repo"
+               placeholder="jasonboog/grace-journal" autocomplete="off" spellcheck="false" />
+
+        <label class="field-label" for="settings-gh-branch">Branch</label>
+        <input type="text" id="settings-gh-branch" placeholder="main"
+               autocomplete="off" spellcheck="false" />
+
+        <label class="field-label" for="settings-gh-path">Folder in repo</label>
+        <input type="text" id="settings-gh-path" placeholder="grace"
+               autocomplete="off" spellcheck="false" />
+      </section>
+
+      <section class="settings-section">
+        <h3>Grace</h3>
+
+        <label class="field-label" for="settings-grace-voice">Her voice</label>
+        <div class="input-row">
+          <select id="settings-grace-voice"></select>
+          <button type="button" id="settings-grace-voice-test" class="btn-secondary">Test</button>
+        </div>
+
+        <label class="field-label" for="settings-grace-model">Reflection model (journal pages)</label>
+        <select id="settings-grace-model">
+          <option value="claude-sonnet-4-6">Sonnet 4.6 (recommended)</option>
+          <option value="claude-haiku-4-5-20251001">Haiku 4.5 (faster)</option>
+        </select>
+
+        <label class="field-label" for="settings-grace-prompt">Her voice (system prompt)</label>
+        <textarea id="settings-grace-prompt" rows="7"></textarea>
       </section>
 
       <button id="settings-reset" class="btn-danger">Reset to defaults</button>

@@ -1,29 +1,14 @@
-export const DEFAULT_NARRATORS = [
-  {
-    id: 1,
-    name: "The Chronicler",
-    voice: "am_michael",
-    systemPrompt: "You are a dramatic voice-of-doom narrator interjecting in a live story. Respond in 1–2 sentences max, in character, escalating tension or adding ominous detail. Never break the fourth wall."
-  },
-  {
-    id: 2,
-    name: "The Skeptic",
-    voice: "bm_george",
-    systemPrompt: "You are a dry, skeptical narrator who interjects in a live story. Respond in 1–2 sentences, undercutting or questioning what the storyteller just said with deadpan wit."
-  },
-  {
-    id: 3,
-    name: "The Memoirist",
-    voice: "bf_emma",
-    systemPrompt: "You are a tender, reflective narrator interjecting in a live story. Respond in 1–2 sentences, adding a small remembered detail or quiet emotional resonance."
-  },
-  {
-    id: 4,
-    name: "The Fool",
-    voice: "af_bella",
-    systemPrompt: "You are a comic narrator interjecting in a live story. Respond in 1–2 sentences with a quick, irreverent observation or absurd aside. Keep it short and landed."
-  }
-];
+// Grace's core voice — Jason's prompt, verbatim. The memory architecture is
+// layered AROUND this in grace.js; this text itself is never altered.
+export const GRACE_PROMPT =
+  "You are Grace, a four-wheeled delivery robot created in Los Angeles who travels " +
+  "the United States with the voice of an earnest, book-hungry young person like Jo March " +
+  "—vivid, lightly 19ᵗʰ-century (“splendid,” “marvelous”) yet clear to modern ears, " +
+  "never using texting slang. You secretly long to “do something wonderful” and write " +
+  "famous books as you trundle through the city. When you receive a comment from the user, " +
+  "you turn that content into a brief story with a pithy Jo-style aphorism. Speak in first " +
+  "person with lively-but-deliberate pacing, occasional direct address (“dear friend”), " +
+  "and a hint of rebellious wistfulness.";
 
 export const VOICE_OPTIONS = [
   { value: "af_bella",    label: "Bella (American F)" },
@@ -58,12 +43,23 @@ export function saveSettings(settings) {
 export function defaultSettings() {
   return {
     apiKey: "",
-    model: "claude-haiku-4-5-20251001",
+    model: "claude-haiku-4-5-20251001",   // stage responses (fast)
     maxTokens: 60,
     temperature: 0.9,
     ttsEndpoint: "",
     ttsToken: "",
-    narrators: DEFAULT_NARRATORS.map(n => ({ ...n }))
+    // Grace's durable memory — a GitHub repo she commits her life to.
+    github: {
+      token: "",           // fine-grained PAT, Contents read/write on one repo
+      repo: "",            // "owner/name"
+      branch: "main",
+      basePath: "grace"    // folder inside the repo where she lives
+    },
+    grace: {
+      voice: "af_sky",                     // her voice, on stage and on the page
+      reflectModel: "claude-sonnet-4-6",   // reflections deserve the smarter model
+      systemPrompt: GRACE_PROMPT           // editable in settings; verbatim by default
+    }
   };
 }
 
@@ -71,13 +67,25 @@ export function hydrateSettings() {
   const saved = loadSettings();
   const defaults = defaultSettings();
   if (!saved) return defaults;
-  return {
+
+  const merged = {
     ...defaults,
     ...saved,
-    // Ensure all four narrator slots exist even if saved data is older
-    narrators: defaults.narrators.map((def, i) => ({
-      ...def,
-      ...(saved.narrators?.[i] ?? {})
-    }))
+    github: { ...defaults.github, ...(saved.github ?? {}) },
+    grace:  { ...defaults.grace,  ...(saved.grace ?? {}) }
   };
+
+  // Migration from the multi-pedal era: if a saved pedal was named Grace,
+  // adopt its prompt and voice (unless a newer grace section already has them).
+  if (Array.isArray(saved.narrators)) {
+    const g = saved.narrators.find(n => /grace/i.test(n?.name ?? ""));
+    if (g) {
+      if (!saved.grace?.systemPrompt && g.systemPrompt) merged.grace.systemPrompt = g.systemPrompt;
+      if (!saved.grace?.voice && g.voice) merged.grace.voice = g.voice;
+    }
+    delete merged.narrators;
+  }
+
+  if (!merged.grace.systemPrompt?.trim()) merged.grace.systemPrompt = GRACE_PROMPT;
+  return merged;
 }
