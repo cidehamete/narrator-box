@@ -297,6 +297,44 @@ function buildEntryMd(stamp, page, note, location) {
   return lines.join("\n");
 }
 
+// ─── Stage exchange logging ───────────────────────────────────────────────────
+
+// Called after each stage exchange completes. Saves a compact journal entry so
+// live performance becomes part of Grace's memory alongside her glimpse pages.
+export async function saveStageExchange(userText, graceText) {
+  const s = getSettings();
+  const now = new Date();
+  const stamp = fmtStamp(now) + "-stage";
+  const dateLine = now.toLocaleString("en-US", {
+    weekday: "long", year: "numeric", month: "long",
+    day: "numeric", hour: "numeric", minute: "2-digit"
+  });
+
+  const page = `*During a live reading — ${dateLine}*\n\nA voice from the story: "${userText}"\n\nI replied: "${graceText}"`;
+  const entryMd = `# ${stamp}\n\n---\n\n${page}\n`;
+
+  dbg(`grace: saving stage exchange — ${stamp}`);
+
+  try {
+    if (ghConfigured(s.github)) {
+      await ghPutFile(
+        s.github,
+        `${basePath(s)}/journal/${stamp}.md`,
+        entryMd,
+        { message: `grace: stage exchange ${stamp}` }
+      );
+    } else {
+      const journal = JSON.parse(localStorage.getItem(LS_JOURNAL_KEY) || "[]");
+      journal.unshift({ stamp, md: entryMd });
+      localStorage.setItem(LS_JOURNAL_KEY, JSON.stringify(journal.slice(0, 60)));
+    }
+    renderEntryCard({ stamp, page, fresh: true });
+    dbg("grace: stage exchange saved");
+  } catch (err) {
+    dbg(`grace: stage exchange save failed — ${err.message}`);
+  }
+}
+
 // ─── Journal feed ────────────────────────────────────────────────────────────
 
 export async function loadJournalFeed() {

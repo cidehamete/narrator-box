@@ -2,7 +2,7 @@ import { hydrateSettings, saveSettings, defaultSettings, VOICE_OPTIONS } from ".
 import { respondStream } from "./llm.js";
 import { createSTT } from "./stt.js";
 import { configureTTS, warmupTTS, isConfigured, unlockAudio, synthesize, playBlob, AudioQueue } from "./tts.js";
-import { initGrace, getMemoryDigest, refreshMemory, loadJournalFeed } from "./grace.js";
+import { initGrace, getMemoryDigest, refreshMemory, loadJournalFeed, saveStageExchange } from "./grace.js";
 import { dbg, initDebugPanel } from "./debug.js";
 
 // ─── State ───────────────────────────────────────────────────────────────────
@@ -210,6 +210,7 @@ async function runGrace(userText) {
   if (digest) systemPrompt += digest;
 
   let buf = "";
+  let fullResponse = "";
   let firstChunk = true;
 
   try {
@@ -223,6 +224,7 @@ async function runGrace(userText) {
     })) {
       if (queue.aborted) break;
       buf += chunk;
+      fullResponse += chunk;
       if (firstChunk) {
         firstChunk = false;
         dbg("pedal: first token — switching to speaking");
@@ -236,6 +238,11 @@ async function runGrace(userText) {
     }
 
     await queue.drain();
+
+    // Save the exchange to Her Pages so stage life becomes part of her memory.
+    if (!queue.aborted && fullResponse.trim()) {
+      saveStageExchange(userText, fullResponse.trim());
+    }
 
   } catch (err) {
     dbg(`pedal: error — ${err.message}`);
