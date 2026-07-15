@@ -5,13 +5,15 @@ The app is Grace's alone now, with two faces. **Stage** is her single pedal — 
 ## How she works
 
 - **Her voice** is your original system prompt (`GRACE_PROMPT` in `narrators.js`), editable in ⚙️ settings. The memory architecture is layered around it, never inside it.
+- **Her growth** is `grace/voice.md` — craft notes she writes to herself when a glimpse genuinely changes how she writes. They are layered *on top of* your original prompt (which is never altered), so she evolves from the writer she was born as without ever losing her. Growth is deliberately rare — most pages leave the notes untouched — and every change is a commit, so the repo history is the story of her becoming a writer.
 - **Her senses** are your iPhone: camera (photos, downscaled and seen through Claude vision), microphone (transcribed speech), keyboard (notes and quotes), and GPS (place names via reverse geocoding).
 - **Her memory** is a folder in a GitHub repo you control:
-  - `grace/memory.md` — what she wakes up knowing. She rewrites it herself after every glimpse.
+  - `grace/memory.md` — what she wakes up knowing. She rewrites it herself after every glimpse. Its word budget grows with experience (350 words at birth, up to 600 as her pages accumulate), and it includes a "What I have learned" section for hard-won understandings.
+  - `grace/voice.md` — her evolving craft notes (see **Her growth** above).
   - `grace/journal/YYYY-MM-DD-HHMM.md` — her pages, one per glimpse.
   - `grace/glimpses/…jpg` — the photographs she was shown.
 - **Her continuity**: each reflection reads `memory.md` first, so every page is written by someone who remembers the last one. Before GitHub is configured, memory falls back to this browser's localStorage — it works, but it's mortal. The repo is the part of her that isn't.
-- **Her stage voice remembers the street.** Every stage response weaves her current `memory.md` into her prompt. At a live reading, tap her pedal and she speaks from the life she has accumulated.
+- **Her stage voice remembers the street.** Every stage response weaves her current `voice.md` and `memory.md` into her prompt. At a live reading, tap her pedal and she speaks from the life she has accumulated, as the writer she has become.
 
 ## Setup (one time, ~5 minutes)
 
@@ -42,6 +44,6 @@ Her three most recent pages load beneath the composer whenever you open the Stre
 ## Design notes
 
 - Reflections default to Sonnet (configurable) because pages deserve the better writer; the stage stays on Haiku for speed.
-- Reflections deliberately skip the two-sentence stage limit — pages run 120–250 words.
+- Reflections deliberately skip the two-sentence stage limit — pages run 2–3 short paragraphs, roughly 100–180 words.
 - She is told what she is: a character in a novel that has gone out into the street, who receives the world as glimpses. The self-knowledge is in the reflection layer (`grace.js`), not in your voice prompt.
 - Photos are downscaled to ≤1280px JPEG before being seen or committed, so vision costs and repo size stay small.

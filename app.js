@@ -2,7 +2,7 @@ import { hydrateSettings, saveSettings, defaultSettings, VOICE_OPTIONS } from ".
 import { respondStream } from "./llm.js";
 import { createSTT } from "./stt.js";
 import { configureTTS, warmupTTS, isConfigured, unlockAudio, synthesize, playBlob, AudioQueue } from "./tts.js";
-import { initGrace, getMemoryDigest, refreshMemory, loadJournalFeed, saveStageExchange } from "./grace.js";
+import { initGrace, getMemoryDigest, getVoiceLayer, refreshMemory, loadJournalFeed, saveStageExchange } from "./grace.js";
 import { dbg, initDebugPanel } from "./debug.js";
 
 // ─── State ───────────────────────────────────────────────────────────────────
@@ -204,8 +204,9 @@ async function runGrace(userText) {
   const queue = new AudioQueue(settings.grace.voice);
   activeQueue = queue;
 
-  // Her stage voice always carries the life she has accumulated in the Street.
-  let systemPrompt = settings.grace.systemPrompt;
+  // Her stage voice always carries the life she has accumulated in the Street:
+  // first the craft notes she has written for herself, then her memories.
+  let systemPrompt = settings.grace.systemPrompt + getVoiceLayer();
   const digest = getMemoryDigest();
   if (digest) systemPrompt += digest;
 

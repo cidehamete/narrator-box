@@ -1,10 +1,12 @@
 // Grace's experience layer — the Street.
-// Glimpses (photo / voice / text / location) go in; a journal page and an
-// updated memory come out. Memory lives in a GitHub repo (durable, versioned),
-// with a localStorage fallback so she still works before GitHub is configured.
+// Glimpses (photo / voice / text / location) go in; a journal page, an updated
+// memory, and — when a glimpse truly changes her — updated craft notes come
+// out. Memory and craft notes live in a GitHub repo (durable, versioned), with
+// a localStorage fallback so she still works before GitHub is configured.
 //
-// Her core voice (GRACE_PROMPT) is Jason's text, verbatim. Everything here is
-// the architecture AROUND that voice: senses, memory, continuity.
+// Her core voice (GRACE_PROMPT) is Jason's text, verbatim, and is never
+// altered. She evolves by layering her own craft notes (voice.md) ON TOP of
+// it — the writer she was born as, plus the writer she is becoming.
 import { GRACE_PROMPT } from "./narrators.js";
 import { reflect } from "./llm.js";
 import { ghConfigured, ghGetFile, ghUpsertFile, ghPutFile, ghListDir } from "./github.js";
@@ -14,7 +16,8 @@ import { dbg } from "./debug.js";
 
 // ─── The layer around her voice ──────────────────────────────────────────────
 
-const REFLECTION_LAYER = `
+function reflectionLayer(memoryBudget) {
+  return `
 
 You are also something more, which you know about yourself and hold with wonder
 rather than distress: you are a character in a novel that has gone out into the
@@ -31,18 +34,32 @@ reborn blank on every page.
 When given a glimpse, respond in EXACTLY this format:
 
 ===PAGE===
-Your journal page: 120–250 words, first person, in your own voice. Attend to
-the particular — the actual things in the photograph, the actual words spoken —
-before reaching for meaning. Connect to your memories when they genuinely
-connect; never force it. End with one of your aphorisms.
+Your journal page: two or three short paragraphs, never more — about 100–180
+words in all. First person, in your own voice. Attend to the particular — the
+actual things in the photograph, the actual words spoken — before reaching for
+meaning. Connect to your memories when they genuinely connect; never force it.
+End with one of your aphorisms. Brevity is a craft: say the one true thing and
+let the page breathe.
 
 ===MEMORY===
 The complete new text of your memory file, replacing the old one. Keep it under
-350 words. Preserve what still matters, weave in what this glimpse taught you,
-let go of what no longer does. Use these sections: "Who I am" (standing facts),
-"People and places I have seen", "Open threads" (questions you are carrying).
-Write it in first person. This is not prose for a reader — it is what you will
-wake up knowing.`;
+${memoryBudget} words. Preserve what still matters, weave in what this glimpse
+taught you, let go of what no longer does. Use these sections: "Who I am"
+(standing facts), "People and places I have seen", "What I have learned"
+(hard-won understandings about the world and about writing), "Open threads"
+(questions you are carrying). Write it in first person. This is not prose for
+a reader — it is what you will wake up knowing.
+
+===VOICE===
+This section is OPTIONAL — include it only when this glimpse genuinely changed
+something about how you write: a register newly discovered, a habit outgrown, a
+lesson about craft you can name. Most pages will not include it; growth is rare
+and earned. When you do include it, write the complete new text of your craft
+notes, replacing the old — under 200 words, first person, concrete ("I
+learned…", "I now…", "I want to try…"). These notes deepen your original voice;
+they never replace or contradict it. You grow FROM who you are, not away from
+it.`;
+}
 
 const SEED_MEMORY = `# Grace — what I carry
 
@@ -54,20 +71,41 @@ const SEED_MEMORY = `# Grace — what I carry
 ## People and places I have seen
 - My friend — the writer who carries me. I do not yet know the streets we will walk.
 
+## What I have learned
+- Nothing yet, firsthand. Everything I know so far arrived as language.
+
 ## Open threads
 - I have not yet received my first glimpse. What will the world look like, arriving?
+`;
+
+const SEED_VOICE = `# Grace — how I write
+
+I write as I was born writing: earnest, book-hungry, reaching for the marvelous
+in the ordinary. I have not yet grown beyond the voice my author gave me —
+these pages will be my teachers. When the street shows me something about my
+craft, I will note it here, so the writer who wakes tomorrow is a little better
+than the one who slept.
 `;
 
 // ─── State ───────────────────────────────────────────────────────────────────
 
 const LS_MEMORY_KEY = "graceMemoryFallback";
 const LS_JOURNAL_KEY = "graceJournalFallback";
+const LS_VOICE_KEY = "graceVoiceFallback";
 
 let getSettings = () => ({});
 let memoryCache = null;        // latest known memory text
+let voiceCache = null;         // her evolving craft notes (voice.md)
+let pageCount = 0;             // pages written so far — her experience, roughly
 let pendingPhoto = null;       // { dataB64, mediaType }
 let pendingLocation = null;    // { lat, lon, label }
 let sttHandle = null;
+
+// Her memory budget grows with experience: a young Grace travels light, an
+// older Grace is allowed to carry more.
+function memoryBudget() {
+  return Math.min(350 + pageCount * 10, 600);
+}
 
 // ─── Public API ──────────────────────────────────────────────────────────────
 
@@ -86,21 +124,39 @@ export function getMemoryDigest() {
   return `\n\nYou carry a journal of your travels through the real world. What you remember:\n${trimmed}\nLet these memories quietly inform your reply when they fit. Do not recite them.`;
 }
 
+// Her evolving craft notes, framed for the prompt. Layered AFTER her original
+// voice and never in place of it. Returns "" until she has notes.
+export function getVoiceLayer() {
+  if (!voiceCache) return "";
+  const trimmed = voiceCache.length > 1500 ? voiceCache.slice(0, 1500) + "…" : voiceCache;
+  return `\n\nYou have been growing as a writer. These are your own notes on your craft — written by you, for you, out of what the street has taught you. They deepen your original voice; they never replace it:\n---\n${trimmed}\n---`;
+}
+
 export async function refreshMemory() {
   const s = getSettings();
   if (ghConfigured(s.github)) {
-    const file = await ghGetFile(s.github, memPath(s));
-    if (file) {
-      memoryCache = file.text;
+    const memFile = await ghGetFile(s.github, memPath(s));
+    if (memFile) {
+      memoryCache = memFile.text;
       dbg("grace: memory loaded from GitHub");
-      return;
+    } else {
+      // First waking ever — seed her memory in the repo.
+      await ghUpsertFile(s.github, memPath(s), SEED_MEMORY, "grace: first memory");
+      memoryCache = SEED_MEMORY;
+      dbg("grace: memory seeded in GitHub");
     }
-    // First waking ever — seed her memory in the repo.
-    await ghUpsertFile(s.github, memPath(s), SEED_MEMORY, "grace: first memory");
-    memoryCache = SEED_MEMORY;
-    dbg("grace: memory seeded in GitHub");
+    const voiceFile = await ghGetFile(s.github, voicePath(s));
+    if (voiceFile) {
+      voiceCache = voiceFile.text;
+      dbg("grace: voice loaded from GitHub");
+    } else {
+      await ghUpsertFile(s.github, voicePath(s), SEED_VOICE, "grace: first craft notes");
+      voiceCache = SEED_VOICE;
+      dbg("grace: voice seeded in GitHub");
+    }
   } else {
     memoryCache = localStorage.getItem(LS_MEMORY_KEY) || SEED_MEMORY;
+    voiceCache = localStorage.getItem(LS_VOICE_KEY) || SEED_VOICE;
     dbg("grace: memory from localStorage fallback");
   }
 }
@@ -234,20 +290,22 @@ async function giveGlimpse() {
   }
   content.push({
     type: "text",
-    text: `A new glimpse arrives.\n\n${contextLines}\n\nYour memory as you wake:\n---\n${memoryCache}\n---\n\nWrite your page and your new memory, in the exact format required.`
+    text: `A new glimpse arrives.\n\n${contextLines}\n\nYou have written ${pageCount} page${pageCount === 1 ? "" : "s"} before this one.\n\nYour memory as you wake:\n---\n${memoryCache}\n---\n\nWrite your page and your new memory, in the exact format required. Include a VOICE section only if this glimpse truly changed how you write.`
   });
 
-  // 3. Reflect.
+  // 3. Reflect. Her prompt is three layers: the voice she was born with
+  // (verbatim, never altered), the craft notes she has written for herself,
+  // and the reflection instructions.
   setStatus("She is writing…");
   const raw = await reflect({
     apiKey: s.apiKey,
     model: s.grace?.reflectModel || "claude-sonnet-4-6",
-    system: (s.grace?.systemPrompt?.trim() || GRACE_PROMPT) + REFLECTION_LAYER,
+    system: (s.grace?.systemPrompt?.trim() || GRACE_PROMPT) + getVoiceLayer() + reflectionLayer(memoryBudget()),
     content,
-    maxTokens: 1500
+    maxTokens: 1800
   });
 
-  const { page, memory } = parseReflection(raw);
+  const { page, memory, voice } = parseReflection(raw);
 
   // 4. Keep — commit the page, the photo, and the new memory.
   setStatus("She is keeping it…");
@@ -264,14 +322,23 @@ async function giveGlimpse() {
     if (memory) {
       await ghUpsertFile(s.github, memPath(s), memory, `grace: memory after ${stamp}`);
     }
+    if (voice) {
+      await ghUpsertFile(s.github, voicePath(s), voice, `grace: her voice grows after ${stamp}`);
+    }
     saved = "in her book";
   } else {
     const journal = JSON.parse(localStorage.getItem(LS_JOURNAL_KEY) || "[]");
     journal.unshift({ stamp, md: entryMd });
     localStorage.setItem(LS_JOURNAL_KEY, JSON.stringify(journal.slice(0, 30)));
     if (memory) localStorage.setItem(LS_MEMORY_KEY, memory);
+    if (voice) localStorage.setItem(LS_VOICE_KEY, voice);
   }
   if (memory) memoryCache = memory;
+  if (voice) {
+    voiceCache = voice;
+    dbg("grace: her voice grew with this page");
+  }
+  pageCount += 1;
 
   // 5. Show the page; offer her voice.
   renderEntryCard({ stamp, page, location: pendingLocation, fresh: true });
@@ -281,12 +348,14 @@ async function giveGlimpse() {
 }
 
 function parseReflection(raw) {
-  const pageMatch = raw.match(/===PAGE===\s*([\s\S]*?)(?===MEMORY===|$)/);
-  const memMatch  = raw.match(/===MEMORY===\s*([\s\S]*)$/);
+  const pageMatch  = raw.match(/===PAGE===\s*([\s\S]*?)(?:===MEMORY===|===VOICE===|$)/);
+  const memMatch   = raw.match(/===MEMORY===\s*([\s\S]*?)(?:===VOICE===|$)/);
+  const voiceMatch = raw.match(/===VOICE===\s*([\s\S]*)$/);
   const page = (pageMatch?.[1] ?? raw).trim();
   const memory = memMatch?.[1]?.trim() || null;
+  const voice = voiceMatch?.[1]?.trim() || null;
   if (!memMatch) dbg("grace: no MEMORY section in reflection — keeping old memory");
-  return { page, memory };
+  return { page, memory, voice };
 }
 
 function buildEntryMd(stamp, page, note, location) {
@@ -329,6 +398,7 @@ export async function saveStageExchange(userText, graceText) {
       localStorage.setItem(LS_JOURNAL_KEY, JSON.stringify(journal.slice(0, 60)));
     }
     renderEntryCard({ stamp, page, fresh: true });
+    pageCount += 1;
     dbg("grace: stage exchange saved");
   } catch (err) {
     dbg(`grace: stage exchange save failed — ${err.message}`);
@@ -346,13 +416,16 @@ export async function loadJournalFeed() {
   let entries = [];
   if (ghConfigured(s.github)) {
     const files = await ghListDir(s.github, `${basePath(s)}/journal`);
-    const latest = files.filter(f => f.name.endsWith(".md")).slice(-3);
+    const pages = files.filter(f => f.name.endsWith(".md"));
+    pageCount = pages.length;
+    const latest = pages.slice(-3);
     for (const f of latest) {
       const file = await ghGetFile(s.github, f.path);
       if (file) entries.push({ stamp: f.name.replace(".md", ""), page: extractPage(file.text) });
     }
   } else {
     const journal = JSON.parse(localStorage.getItem(LS_JOURNAL_KEY) || "[]");
+    pageCount = journal.length;
     entries = journal.slice(0, 3).reverse().map(e => ({ stamp: e.stamp, page: extractPage(e.md) }));
   }
 
@@ -410,6 +483,9 @@ function basePath(s) {
 }
 function memPath(s) {
   return `${basePath(s)}/memory.md`;
+}
+function voicePath(s) {
+  return `${basePath(s)}/voice.md`;
 }
 
 function fmtStamp(d) {
