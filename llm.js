@@ -1,12 +1,22 @@
 // Calls Anthropic Messages API directly from the browser (BYOK).
 // The apiKey is stored only in localStorage and sent only to api.anthropic.com.
 
-const SYSTEM_SUFFIX =
-  "\n\nIMPORTANT: Two sentences maximum. Each sentence ≤15 words. " +
-  "Speak in character only — no preamble, no stage directions, no quotation marks.";
+// Stage length is enforced by instruction, not by truncation: the sentence
+// budget lives in the prompt, and max_tokens is a generous safety net far
+// above it, so she finishes her thought instead of being cut off mid-word.
+function stageSuffix(sentences) {
+  const n = Math.max(1, Math.min(8, sentences || 2));
+  return `\n\nIMPORTANT: ${n === 1 ? "One sentence" : `At most ${n} sentences`}. ` +
+    "Each sentence ≤15 words. Always complete your final sentence — if you are " +
+    "running long, end early at a sentence boundary, never mid-thought. " +
+    "Speak in character only — no preamble, no stage directions, no quotation marks.";
+}
 
 // Streaming generator — yields text delta chunks as they arrive.
-export async function* respondStream({ apiKey, model, systemPrompt, userText, maxTokens, temperature }) {
+// `sentences` is her stage budget; `outcome.stopReason` is set when the stream
+// ends ("end_turn", "max_tokens", …) so callers can detect truncation.
+export async function* respondStream({ apiKey, model, systemPrompt, userText, sentences = 2, temperature, outcome = {} }) {
+  const maxTokens = 80 + Math.max(1, Math.min(8, sentences || 2)) * 40;
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -20,7 +30,7 @@ export async function* respondStream({ apiKey, model, systemPrompt, userText, ma
       max_tokens: maxTokens,
       temperature,
       stream: true,
-      system: systemPrompt.trim() + SYSTEM_SUFFIX,
+      system: systemPrompt.trim() + stageSuffix(sentences),
       messages: [{ role: "user", content: userText }]
     })
   });
@@ -48,6 +58,8 @@ export async function* respondStream({ apiKey, model, systemPrompt, userText, ma
         const evt = JSON.parse(data);
         if (evt.type === "content_block_delta" && evt.delta?.type === "text_delta") {
           yield evt.delta.text;
+        } else if (evt.type === "message_delta" && evt.delta?.stop_reason) {
+          outcome.stopReason = evt.delta.stop_reason;
         }
       } catch { /* ignore partial frames */ }
     }

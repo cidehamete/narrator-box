@@ -83,8 +83,10 @@ Notes:
 | Setting | Default | Range |
 |---------|---------|-------|
 | Model | `claude-haiku-4-5-20251001` | Haiku 4.5, Sonnet 4.6 |
-| Max tokens | 80 | 30–200 |
+| Her stage length | 2 sentences | 1–6 sentences |
 | Temperature | 0.9 | 0.0–1.5 |
+
+Stage length is enforced by instruction, not truncation — whatever the setting, she always finishes her sentence. (Tokens are capped only as a generous safety net; if it were ever hit, the app drops the unfinished tail so she ends on a complete thought.)
 
 Higher temperature = more creative/unpredictable responses. For stage use, 0.8–1.1 works well.
 

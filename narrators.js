@@ -44,7 +44,7 @@ export function defaultSettings() {
   return {
     apiKey: "",
     model: "claude-haiku-4-5-20251001",   // stage responses (fast)
-    maxTokens: 60,
+    stageSentences: 2,                    // how long she speaks on stage
     temperature: 0.9,
     ttsEndpoint: "",
     ttsToken: "",
@@ -85,6 +85,13 @@ export function hydrateSettings() {
     }
     delete merged.narrators;
   }
+
+  // Migration: the raw maxTokens control became a sentence-count setting.
+  // Length is now enforced by instruction; tokens are only a safety net.
+  if (saved.maxTokens && !saved.stageSentences) {
+    merged.stageSentences = saved.maxTokens <= 80 ? 2 : saved.maxTokens <= 140 ? 3 : 4;
+  }
+  delete merged.maxTokens;
 
   if (!merged.grace.systemPrompt?.trim()) merged.grace.systemPrompt = GRACE_PROMPT;
   return merged;

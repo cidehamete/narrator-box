@@ -213,6 +213,7 @@ async function runGrace(userText) {
   let buf = "";
   let fullResponse = "";
   let firstChunk = true;
+  const outcome = {};
 
   try {
     for await (const chunk of respondStream({
@@ -220,8 +221,9 @@ async function runGrace(userText) {
       model: settings.model,
       systemPrompt,
       userText,
-      maxTokens: settings.maxTokens,
-      temperature: settings.temperature
+      sentences: settings.stageSentences,
+      temperature: settings.temperature,
+      outcome
     })) {
       if (queue.aborted) break;
       buf += chunk;
@@ -235,7 +237,14 @@ async function runGrace(userText) {
     }
 
     if (!queue.aborted) {
-      flushSentences(buf, queue, true);
+      // If the safety-net token cap was somehow hit, the tail is an unfinished
+      // sentence — she ends on her last complete thought rather than speaking it.
+      if (outcome.stopReason === "max_tokens" && buf.trim()) {
+        dbg(`pedal: truncated by token cap — dropping unfinished tail "${buf.trim().slice(0, 40)}"`);
+        fullResponse = fullResponse.slice(0, fullResponse.length - buf.length);
+      } else {
+        flushSentences(buf, queue, true);
+      }
     }
 
     await queue.drain();
@@ -265,7 +274,7 @@ function renderSettings() {
   document.getElementById("settings-tts-token").value    = settings.ttsToken ?? "";
   document.getElementById("settings-apikey").value       = settings.apiKey;
   document.getElementById("settings-model").value        = settings.model;
-  document.getElementById("settings-max-tokens").value   = settings.maxTokens;
+  document.getElementById("settings-stage-length").value = settings.stageSentences ?? 2;
   document.getElementById("settings-temperature").value  = settings.temperature;
   document.getElementById("settings-temperature-display").textContent = settings.temperature;
 
@@ -291,7 +300,7 @@ function collectSettings() {
     ttsToken:    document.getElementById("settings-tts-token").value.trim(),
     apiKey:      document.getElementById("settings-apikey").value.trim(),
     model:       document.getElementById("settings-model").value,
-    maxTokens:   parseInt(document.getElementById("settings-max-tokens").value, 10),
+    stageSentences: parseInt(document.getElementById("settings-stage-length").value, 10) || 2,
     temperature: parseFloat(document.getElementById("settings-temperature").value),
     github: {
       token:    document.getElementById("settings-gh-token").value.trim(),

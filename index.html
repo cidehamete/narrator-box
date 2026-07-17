@@ -123,8 +123,14 @@
           <option value="claude-sonnet-4-6">Sonnet 4.6 (smarter)</option>
         </select>
 
-        <label class="field-label" for="settings-max-tokens">Max tokens</label>
-        <input type="number" id="settings-max-tokens" min="30" max="200" />
+        <label class="field-label" for="settings-stage-length">Her stage length</label>
+        <select id="settings-stage-length">
+          <option value="1">One sentence — a single aphorism</option>
+          <option value="2">Two sentences — brief</option>
+          <option value="3">Three sentences</option>
+          <option value="4">Four sentences — a small story</option>
+          <option value="6">Six sentences — expansive</option>
+        </select>
 
         <label class="field-label">
           Temperature: <span id="settings-temperature-display">0.9</span>

@@ -44,6 +44,6 @@ Her three most recent pages load beneath the composer whenever you open the Stre
 ## Design notes
 
 - Reflections default to Sonnet (configurable) because pages deserve the better writer; the stage stays on Haiku for speed.
-- Reflections deliberately skip the two-sentence stage limit — pages run 2–3 short paragraphs, roughly 100–180 words.
+- Reflections deliberately skip the stage sentence budget ("Her stage length" in ⚙️ settings, 1–6 sentences) — pages run 2–3 short paragraphs, roughly 100–180 words.
 - She is told what she is: a character in a novel that has gone out into the street, who receives the world as glimpses. The self-knowledge is in the reflection layer (`grace.js`), not in your voice prompt.
 - Photos are downscaled to ≤1280px JPEG before being seen or committed, so vision costs and repo size stay small.
